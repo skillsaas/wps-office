@@ -16,7 +16,14 @@ trademarks of Microsoft.
 - You write WPS JS macros, wpsjs add-ins or KDocs AirScript, or run WPS for Linux.
 
 ## Install
-One step, from a checkout or an unpacked npm tarball (standard library only, no network):
+```bash
+npx skills add skillsaas/wps-office         # skills CLI, reads SKILL.md at the repo root
+npm install wps-office                      # files land in node_modules/wps-office/
+python3 node_modules/wps-office/scripts/install_skill.py --claude   # copies the skill into ~/.claude/skills/wps-office
+# Planned, not yet published: npx @skillsaas/cli add wps-office
+```
+From a checkout or the npm folder, `scripts/install_skill.py` copies the skill in one step
+(standard library only, no network):
 ```bash
 python3 scripts/install_skill.py --claude              # ~/.claude/skills/wps-office (Claude Code, personal)
 python3 scripts/install_skill.py --claude-project      # ./.claude/skills/wps-office (this project)
@@ -24,11 +31,6 @@ python3 scripts/install_skill.py --dest ~/my-agent/skills   # any agent that rea
 ```
 It copies only what the skill needs, checks every file's SHA-256, and refuses to overwrite an
 existing copy (`--replace` moves the old one next to the skills folder; nothing is deleted).
-`--dry-run` lists the files. The folder name is `wps-office`, matching `name:` in `SKILL.md`,
-which is what agents use to find a skill.
-
-Planned, not published yet: `npx @skillsaas/cli add wps-office --claude` and
-`npx skills add skillsaas/wps-office`. Until then GitHub and npm return 404 for this skill.
 
 ## Preflight (copy and run)
 ```bash
