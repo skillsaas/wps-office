@@ -58,7 +58,7 @@ Windows, run the converter inside a Linux VM or container.
 | `VALIDATION.md` | What was tested against what, and what was not |
 
 Scripts need Python 3.9+ only; conversion also needs LibreOffice and, on Linux, bubblewrap.
-Tested only on Linux; the CI workflow targets Linux, macOS and Windows but has not run yet. WPS Office itself
+Smoke tests pass in CI on Linux, macOS and Windows (Python 3.9 and 3.13); the sandboxed conversion tests run on Linux only. WPS Office itself
 was not run. Catalog of all skills: https://github.com/skillsaas/index
 
 License: MIT.

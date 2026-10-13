@@ -10,7 +10,8 @@
 - Hamza: show where `--replace` moved the old copy; PEP 8 blank lines; decide on a `skills/wps-office/SKILL.md` npm layout.
 
 ## 0.1.3 (2026-10-13)
-Round-3 review fixes (12 reviews, mean 8.92).
+Round-3 review fixes (12 reviews, mean 8.92). Published on GitHub and npm after review round 4;
+CI green on Linux, macOS and Windows.
 - Links (Tariq N5): Cf characters are removed before hyphen look-alikes are mapped, so a soft
   hyphen inside a scheme disappears instead of becoming `-`; the dehyphenated scheme is compared
   with `HIGH_FLAT` (HIGH_SCHEMES without hyphens); every scheme starting `ms` (hyphens removed) is

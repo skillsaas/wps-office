@@ -2,7 +2,7 @@
 name: wps-office
 description: "Use when a user has a WPS Office (Kingsoft) file or task: a .wps, .et or .dps (or .wpt/.ett/.dpt) that Word, Excel or PowerPoint will not open; Excel showing #NAME? or =DISPIMG(\"ID_...\") where WPS showed in-cell pictures; a .wps that may be Microsoft Works; converting WPS files to docx/xlsx/pptx/pdf in a sandbox; checking a WPS file for VBA or WPS JS (JSA) macros, remote templates, DDE, embedded objects or metadata before opening or sharing; writing WPS JS macros, wpsjs add-ins or KDocs AirScript; WPS for Linux. Not for plain Microsoft Office files with no WPS link."
 license: MIT
-compatibility: "Python 3.9+ standard library only. convert_wps.py also needs LibreOffice and, on Linux, bubblewrap (bwrap); without bwrap it refuses. Smoke tests run on Linux; the CI workflow covers Linux, macOS and Windows (not yet run: repo not pushed). WPS Office itself was not installed or run."
+compatibility: "Python 3.9+ standard library only. convert_wps.py also needs LibreOffice and, on Linux, bubblewrap (bwrap); without bwrap it refuses. Smoke tests pass in CI on Linux (all 63, sandbox included), macOS and Windows (conversion tests skip there), Python 3.9 and 3.13. WPS Office itself was not installed or run."
 metadata:
   version: "0.1.3"
   updated: "2026-10-13"
@@ -172,8 +172,9 @@ open, render, run or upload them automatically.
 | Chinese text shows boxes on Linux | fonts | `references/linux.md` fonts section |
 
 ## Platform notes
-- Scripts: standard-library Python. **Tested only on Linux** (Python 3.13.5 and 3.9). The CI
-  workflow targets Linux, macOS and Windows but has not run yet (repo not pushed).
+- Scripts: standard-library Python. Smoke tests pass in GitHub Actions on ubuntu-latest (all 63,
+  including the bwrap sandbox and network canary), macos-15-intel and windows-latest (conversion
+  tests skip: no bwrap), with Python 3.9 and 3.13.
 - Real WPS-saved files tested: six `.doc/.xls/.ppt/.docx/.xlsx/.pptx` from WPS Office 11.1
   (Apache Tika corpus, `tests/samples/`), plus one third-party DISPIMG workbook (not WPS-saved).
   No native `.wps/.et/.dps`, WPS-saved DISPIMG or JS-macro file under a public license was found;

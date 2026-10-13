@@ -9,7 +9,7 @@ manual run on this date. Anything not listed was not tested.
 | Linux (Debian, x86_64) | Python 3.13.5 and 3.9.25 | Full suite passes, also under `ulimit -v 4000000` |
 | LibreOffice | 25.2.3.2 (build 520) | Conversion tests pass inside bwrap |
 | bubblewrap | 0.12.0 | Sandbox tests pass, including the network canary |
-| macOS, Windows | none | Not run. `.github/workflows/test.yml` targets them; the repo is not pushed, so CI has never run |
+| GitHub Actions | ubuntu-latest, macos-15-intel, windows-latest; Python 3.9 and 3.13 | All pass. Linux runs all 63 tests (bwrap allowed via sysctl); macOS and Windows skip the conversion and sandbox tests (no bwrap) |
 | WPS Office (any OS) | none | Not installed or run. No claim here is checked against WPS itself |
 | Other LibreOffice versions | none | Not tested; the converter does not refuse them |
 
