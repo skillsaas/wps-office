@@ -429,7 +429,7 @@ def canary_no_network_in_sandbox():
     _H.hits = []
     p = os.path.join(TMP, "canary.docx")
     make_fixtures.canary_docx(p, srv.server_address[1])
-    rc, d = js("convert_wps.py", p, os.path.join(TMP, "canary.pdf"), "--to", "pdf", "--allow-risky-input")
+    rc, d = js("convert_wps.py", p, os.path.join(TMP, "canary.pdf"), "--to", "pdf", "--allow-risky-input", "--consent", "test: user accepted")
     time.sleep(0.5)
     srv.shutdown()
     assert rc in (0, 1) and d["output"], d
@@ -737,7 +737,7 @@ def real_sample_converts_with_consent_only():
     assert rc == 3 and "input-risks" in d["exit_reasons"] and not os.path.exists(out)
     rc, d = js("convert_wps.py", src, out, "--to", "xlsx", "--dry-run")
     assert rc == 1 and not d["plan"]["would_run"] and not os.path.exists(out)
-    rc, d = js("convert_wps.py", src, out, "--to", "xlsx", "--allow-risky-input")
+    rc, d = js("convert_wps.py", src, out, "--to", "xlsx", "--allow-risky-input", "--consent", "test: user accepted")
     assert rc == 1 and os.path.exists(out) and d["engine_version"].startswith("LibreOffice"), d.get("error")
 
 
@@ -760,6 +760,141 @@ def convert_dry_run_writes_nothing():
     rc, d = js("convert_wps.py", f("clean.docx"), out, "--to", "pdf", "--dry-run")
     assert "plan" in d and d["plan"]["expected_losses"] and not os.path.exists(out), d
     assert rc == (0 if d["plan"]["would_run"] else 1)
+
+
+# ---------------------------------------------------------------- 0.1.3
+@test
+def n5_cf_stripped_before_hyphen_compare():
+    import wpslib
+    for raw in ("se\u00adarch-ms:query=x", "search\u00ad-ms:x", "s\u200bearch\u2011ms:x", "searchms:x",
+                "ms\u00ad-msdt:x", "f\u00adile:///etc/passwd", "m\u2010s-excel:ofe|u|https://x"):
+        assert wpslib.link_target(raw)[3] == "high", (raw, wpslib.link_target(raw))
+    assert wpslib.link_target("se\u00adarch-ms:x")[1] == "search-ms"
+    nine = "%" + "25" * 9 + "66ile:///x"       # still encoded after the 8-pass cap
+    assert wpslib.link_target(nine)[3] == "high"
+    assert wpslib.link_target("a%20b.pdf")[3] == "none"
+
+
+@test
+def n6_relative_dot_com_is_medium_not_high():
+    import wpslib
+    for raw in ("archive.com", "docs/archive.com", "ARCHIVE.COM"):
+        assert wpslib.link_target(raw)[3] == "medium", raw
+    assert wpslib.link_target("run.exe")[3] == "high"
+    assert wpslib.link_target("https://archive.com")[3] == "none"
+
+
+@test
+def n7_doctype_text_inside_processing_instruction():
+    import wpslib
+    assert not wpslib._has_dtd(b'<?xml version="1.0"?><?note see <!DOCTYPE x> ?><a/>')
+    assert not wpslib._has_dtd('<?pi <!DOCTYPE x> ?><a/>'.encode("utf-16"))
+    assert wpslib._has_dtd(b"<?pi x?><!DOCTYPE a><a/>")
+    assert wpslib._has_dtd(b"<?pi unterminated <!DOCTYPE a>")
+    import zipfile
+    src, dst = f("clean.docx"), os.path.join(TMP, "pi_doctype.docx")
+    with zipfile.ZipFile(src) as zi, zipfile.ZipFile(dst, "w") as zo:
+        for it in zi.infolist():
+            b = zi.read(it)
+            if it.filename == "word/document.xml":
+                b = b.replace(b"?>", b"?><?wps-note <!DOCTYPE is only text here?>", 1)
+            zo.writestr(it, b)
+    rc, d = js("inspect_wps.py", dst)
+    assert rc == 0 and d["status"] == "ok", d.get("error")
+
+
+@test
+def ppt_objects_counted_by_record_walk():
+    import struct
+    import inspect_wps
+    def rec(ver, typ, body):
+        return struct.pack("<HHI", ver, typ, len(body)) + body
+    obj = rec(0x0, 0x1011, b"\x00" * 12)
+    doc = rec(0xF, 0x03E8, rec(0x0, 0x03E9, b"\x00" * 40) + rec(0xF, 0x040B, obj))
+    # a byte pattern that looks like an ExOleObjStg header inside an atom must not count
+    fake = rec(0x0, 0x0FA0, b"\x10\x00\x11\x10" * 3)
+    n, end, ok = inspect_wps.ppt_count_ole(doc + obj + fake + b"\x00" * 7)
+    assert (n, ok) == (2, True), (n, end, ok)
+    n, end, ok = inspect_wps.ppt_count_ole(doc + b"\xff\xff\xff\xff\xff\xff\xff\x7f")
+    assert not ok and end == len(doc)
+    sd = os.path.join(ROOT, "tests", "samples", "testWPSAttachment.ppt")
+    if os.path.exists(sd):
+        _, d = js("inspect_wps.py", sd)
+        assert "ppt-record-walk-incomplete" not in d["coverage_gaps"]
+        assert any("9 ExOleObjStg record(s) (record walk)" in x["detail"] for x in d["detected_risks"]), d["detected_risks"]
+
+
+@test
+def consent_is_required_recorded_and_logged():
+    out = os.path.join(TMP, "consent.pdf")
+    rc, d = js("convert_wps.py", f("clean.docx"), out, "--to", "pdf", "--allow-risky-input")
+    assert rc == 3 and "--consent" in d["error"] and not d["conversion_attempted"] and not os.path.exists(out)
+    rc, d = js("convert_wps.py", f("clean.docx"), out, "--to", "pdf", "--allow-risky-input", "--consent", "  ")
+    assert rc == 3
+    rc, d = js("convert_wps.py", f("clean.docx"), out, "--to", "pdf", "--bogus-flag")
+    assert rc == 2 and d["status"] == "error" and d["output_written"] is False
+    if not soffice() or not sandbox_ok():
+        return ("SKIP", "consent recording needs LibreOffice and a working bwrap")
+    log = os.path.join(TMP, "consent.jsonl")
+    rc, d = js("convert_wps.py", f("ole_package.docx"), out, "--to", "pdf", "--allow-risky-input",
+               "--consent", "User: yes convert it", "--consent-log", log, "--force")
+    assert d["consent"] and d["consent"]["text"] == "User: yes convert it" and "ole-package" in d["consent"]["risks_accepted"], d
+    assert len(d["consent"]["input_sha256"]) == 64 and d["conversion_attempted"]
+    with open(log) as fh:
+        assert json.loads(fh.readline())["text"] == "User: yes convert it"
+
+
+@test
+def third_party_dispimg_sample_non_hex_id():
+    sd = os.path.join(ROOT, "tests", "samples", "third-party-dispimg-ooxml-excel-editor.xlsx")
+    if not os.path.exists(sd):
+        return ("SKIP", "tests/samples not shipped")
+    od = os.path.join(TMP, "oja_out")
+    rc, d = js("cellimages.py", sd, "--extract", od)
+    assert rc == 0 and d["cells"][0]["image_id"] == "ID_demo_0001" and d["cells"][0]["cell"] == "B2", d
+    assert len(d["saved"]) == 1
+
+
+@test
+def install_skill_one_step():
+    dest = os.path.join(TMP, "agent", "skills")
+    rc, out, err = run("install_skill.py", "--dest", dest)
+    assert rc == 0, err
+    tgt = os.path.join(dest, "wps-office")
+    assert os.path.isfile(os.path.join(tgt, "SKILL.md")) and os.path.isfile(os.path.join(tgt, "scripts", "inspect_wps.py"))
+    assert not os.path.exists(os.path.join(tgt, "tests", "samples"))
+    rc, out, err = run("install_skill.py", "--dest", dest)
+    assert rc == 3 and "exists" in err
+    rc, out, err = run("install_skill.py", "--dest", dest, "--replace", "--json")
+    d = json.loads(out)
+    assert rc == 0 and os.path.isdir(d["moved_aside"]) and os.path.dirname(d["moved_aside"]) != dest
+    pr = subprocess.run([sys.executable, os.path.join(tgt, "scripts", "inspect_wps.py"), f("clean.docx"), "--json"],
+                        capture_output=True, text=True, timeout=120)
+    assert pr.returncode == 0, pr.stderr
+
+
+@test
+def manifest_versions_agree():
+    import wpslib
+    with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as fh:
+        pk = json.load(fh)
+    with open(os.path.join(ROOT, "skill.json"), encoding="utf-8") as fh:
+        sk = json.load(fh)
+    with open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8") as fh:
+        md = fh.read()
+    fm = md.split("---", 2)[1]
+    m = re.search(r"^\s*version:\s*\"?([0-9.]+)", fm, re.M)
+    assert m and pk["version"] == sk["version"] == wpslib.VERSION == m.group(1), (pk["version"], sk.get("version"), wpslib.VERSION)
+    assert re.search(r"^name:\s*wps-office\s*$", fm, re.M)
+    d = re.search(r"^description:\s*(.+)$", fm, re.M).group(1)
+    assert len(d) <= 1024, len(d)
+    with open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8") as fh:
+        assert "## " + wpslib.VERSION in fh.read()
+    for fn in pk["files"]:
+        if "*" not in fn:
+            assert os.path.exists(os.path.join(ROOT, fn.rstrip("/"))), fn
+    for p in ("VALIDATION.md", "scripts/install_skill.py"):
+        assert os.path.exists(os.path.join(ROOT, p)), p
 
 
 def main():

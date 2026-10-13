@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 import re
+import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -88,6 +89,37 @@ CATEGORY = {
     "compatibility": ("wps-cell-images",),
 }
 
+
+
+def ppt_count_ole(pd, max_records=2000000):
+    """Count ExOleObjStg (0x1011) records by walking PowerPoint records.
+
+    Each record has an 8-byte header: recVer (4 bits) and recInstance (12 bits),
+    recType (16 bits), recLen (32 bits), all little-endian ([MS-PPT] 2.3.1).
+    recVer 0xF is a container whose children follow its header, so the walk
+    steps into it; anything else is skipped by recLen. Returns
+    (count, offset reached, True if the walk consumed the stream cleanly).
+    """
+    pos, n, seen, end = 0, 0, 0, len(pd)
+    while pos + 8 <= end:
+        seen += 1
+        if seen > max_records:
+            return n, pos, False
+        verinst, rtype, rlen = struct.unpack_from("<HHI", pd, pos)
+        known = 0x03E8 <= rtype <= 0x2FFF or 0xF000 <= rtype <= 0xF2FF
+        if not known or pos + 8 + rlen > end:
+            # [MS-PPT] types run from 0x03E8; OfficeArt drawing records
+            # ([MS-ODRAW]) use 0xF000 to 0xF122. A record past the end means damage.
+            if pd[pos:].strip(b"\x00") == b"":
+                return n, end, True          # zero padding at the end
+            return n, pos, False
+        if rtype == 0x1011:
+            n += 1
+        if verinst & 0xF == 0xF:
+            pos += 8
+        else:
+            pos += 8 + rlen
+    return n, pos, pos >= end or pd[pos:].strip(b"\x00") == b""
 
 def category(kind):
     """What kind of concern a risk is: execution, fetch, deception, privacy, coverage, compatibility."""
@@ -209,10 +241,15 @@ def inspect_cfb(rep, data, dl, cap):
         # Embedded objects in .ppt/.dps live inside the PowerPoint Document stream as
         # ExOleObjStg records (type 0x1011), not as storages: count record headers.
         pd = cfb.read([e for e in cfb.entries if e["path"].lower() == "powerpoint document"][0], min(cap, 64 * 1024 * 1024))
-        n_obj = len(re.findall(rb"[\x00\x10]\x00\x11\x10", pd))
+        n_obj, walk_end, walk_ok = ppt_count_ole(pd)
+        if not walk_ok:
+            # Damaged or unusual stream: fall back to a byte scan and say so.
+            n_obj = max(n_obj, len(re.findall(rb"[\x00\x10]\x00\x11\x10", pd)))
+            rep.gap("PowerPoint record walk stopped at byte %d of %d; embedded object count is a byte-scan estimate" % (walk_end, len(pd)), "ppt-record-walk-incomplete")
         if n_obj:
-            r["embedded_objects"].append({"kind": "ppt-exoleobjstg", "path": "PowerPoint Document (%d record header(s))" % n_obj})
-            rep.risk("medium", "embedded-objects", "PowerPoint stream has %d ExOleObjStg record header(s): embedded OLE objects (byte scan; contents not parsed, may include OLE packages)" % n_obj)
+            how = "record walk" if walk_ok else "byte-scan estimate"
+            r["embedded_objects"].append({"kind": "ppt-exoleobjstg", "path": "PowerPoint Document (%d ExOleObjStg record(s), %s)" % (n_obj, how)})
+            rep.risk("medium", "embedded-objects", "PowerPoint stream has %d ExOleObjStg record(s) (%s): embedded OLE objects; contents not parsed, may include OLE packages" % (n_obj, how))
     elif "mn0" in names:
         r["family"], r["format"] = "works", "Microsoft Works word processor (.wps, MN0 stream); not a Kingsoft WPS file"
     else:

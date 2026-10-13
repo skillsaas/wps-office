@@ -21,3 +21,13 @@ macros, was found under a public license (searched: Apache POI test-data, LibreO
 data via GitHub code search, Apache Tika). Apache POI issue 1041 attaches WPS-saved `.doc`
 files, but they were never merged into POI's test-data, so their license is unclear and they are
 not included.
+
+## Independent DISPIMG sample (third-party, MIT, not WPS-saved)
+
+`third-party-dispimg-ooxml-excel-editor.xlsx` is copied unchanged from
+https://github.com/ojaDeveloper/ooxml-excel-editor (`public/wps-dispimg-sample.xlsx`, commit
+c672235, 2026-06-05), MIT license, copy in `LICENSE-MIT-ooxml-excel-editor.txt`. Its author
+generated it with ExcelJS and injected `xl/cellimages.xml` (script `scripts/gen-wps-sample.mjs`
+in that repository); WPS did not save it. It is useful because someone else wrote it from
+their own reading of the WPS layout: it uses a non-hex picture name (`ID_demo_0001`) and an
+XML-escaped formula, which exposed a bug in `cellimages.py` 0.1.2 (fixed in 0.1.3).

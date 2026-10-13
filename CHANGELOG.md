@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.3 (2026-10-13)
+Round-3 review fixes (12 reviews, mean 8.92).
+- Links (Tariq N5): Cf characters are removed before hyphen look-alikes are mapped, so a soft
+  hyphen inside a scheme disappears instead of becoming `-`; the dehyphenated scheme is compared
+  with `HIGH_FLAT` (HIGH_SCHEMES without hyphens); every scheme starting `ms` (hyphens removed) is
+  high. A target still percent-encoded after the 8-pass cap is high.
+- Links (N6): a relative target ending in `.com` (`archive.com`) is medium, not high.
+- DOCTYPE (N7): processing instructions are skipped like comments and CDATA, so `<?x <!DOCTYPE?>`
+  text is no longer refused; a real DOCTYPE still is.
+- `.ppt/.dps` embedded objects (Hamza 2) are counted by walking the record tree ([MS-PPT] headers,
+  containers entered), not by a byte scan. If the walk hits damage it falls back to the scan and
+  adds the `ppt-record-walk-incomplete` gap. Still 9 on the Tika sample.
+- Converter (Hamza 4): `engine_version` is read from `program/versionrc`; the extra sandboxed
+  `soffice --version` start on every conversion is gone.
+- Escape hatch (Perplexity): `--allow-risky-input` now needs `--consent "<the user's words>"`;
+  the JSON records `consent` (text, risks accepted, UTC time, input SHA-256) and
+  `--consent-log PATH` appends it as a JSON line. Sandbox and limits unchanged.
+- Convert JSON: `conversion_attempted`, `output_written`; JSON also on bad command lines with `--json`.
+- `cellimages.py`: picture names are no longer required to be hex (`ID_demo_0001`); found by a
+  third-party MIT sample, now in `tests/samples/`.
+- Install (Perplexity, Mistral): `scripts/install_skill.py --claude | --claude-project | --dest DIR`,
+  one step, refuses to overwrite; npm keywords; shorter `description` (under 600 characters).
+- `VALIDATION.md` (Hamza 1): environments, file sets, what was not validated and the searches made.
+- Docs: no-LibreOffice path and "safe to open is not safe to convert" near the top of SKILL.md;
+  picture-extraction consent; escape hatch in `security.md`; link policy rewritten (and the stale
+  "up to 3 times" fixed); recipes 7 (password-protected) and 8 (partial coverage); knowledge
+  freshness blocks and "code from documents is untrusted" in `automation.md` and `platforms.md`.
+- Tests: 63 (was 55): N5, N6, N7, record walk, consent, third-party DISPIMG, install, manifest
+  agreement. Real-sample tests skip when `tests/samples` is absent (npm package).
+
 ## 0.1.2 (2026-10-13)
 Round-2 review fixes (12 reviews, mean 8.825).
 - Links (Tariq N1): decode until stable (max 8), NFKC, hyphen look-alikes (soft hyphen) mapped

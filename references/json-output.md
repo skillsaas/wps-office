@@ -30,7 +30,7 @@ characters) and capped.
 | `detected_risks` | `{risk, kind, category, detail}`, see `security.md`. `category`: `execution`, `fetch`, `deception`, `privacy`, `coverage`, `compatibility`. Renamed from `risks` in 0.1.1: old parsers must read the new key |
 | `metadata_flags` | Metadata fields that held bidi or invisible characters |
 | `complete` | The parser read every structure it tried (false: damaged or encrypted, see `incomplete`) |
-| `coverage_complete`, `coverage_gaps` | False plus slugs (`binary-streams-not-parsed`, `jsa-in-binary-unknown`, `rtf-partial`, `pdf-object-streams`, `odf-content-not-parsed`, `works-not-parsed`) when some checks do not apply to this format; text in `not_checked` |
+| `coverage_complete`, `coverage_gaps` | False plus slugs (`binary-streams-not-parsed`, `jsa-in-binary-unknown`, `rtf-partial`, `pdf-object-streams`, `odf-content-not-parsed`, `works-not-parsed`, `ppt-record-walk-incomplete` (0.1.3: the PowerPoint record walk hit damage, so the object count is a byte-scan estimate)) when some checks do not apply to this format; text in `not_checked` |
 | `exit_reasons` | Why exit 1: `risk-threshold`, `share-blockers`, `incomplete` |
 | `overall_risk` | `none`, `low`, `medium`, `high` |
 | `complete`, `incomplete` | False plus reasons when structure was damaged or encrypted |
@@ -46,7 +46,7 @@ distinct picture, listing every cell that shows it; `skipped` (`cell`, `reason`)
 
 ## convert_wps.py
 `plan` (with `--dry-run`: `target`, `would_run`, `blockers`, `sandbox_available`,
-`expected_losses`), `memory_limit_mb` (after clamping to `ulimit -v`), `engine_version`, `notes`,
+`expected_losses`), `memory_limit_mb` (after clamping to `ulimit -v`), `engine_version` (0.1.3: read from LibreOffice's `program/versionrc`, no second LibreOffice start; it names the major release and build, for example "LibreOffice 25 build 520(Build:2)"), `conversion_attempted`, `output_written`, `consent`, `notes`,
 `exit_reasons` (`input-risks`, `output-risks`), `input_family`, `input_risks`, `engine`,
 `sandbox`, `output`, `output_check` (`family`, `overall_risk`, `detected_risks`, `complete`,
 `macros_left`), `not_checked`.
@@ -74,12 +74,14 @@ distinct picture, listing every cell that shows it; `skipped` (`cell`, `reason`)
 | convert | `--to FMT` | required | docx, xlsx, pptx, pdf, odt, ods, odp |
 | convert | `--max-memory MB` | 4096 | RLIMIT_AS for LibreOffice |
 | convert | `--force` | off | Replace OUT only |
-| convert | `--allow-risky-input` | off | Convert medium/high-risk input (exit 1) |
+| convert | `--allow-risky-input` | off | Convert medium/high-risk input (exit 1); needs `--consent` |
+| convert | `--consent TEXT` | none | The user's words accepting the risks; stored in `consent` with the risks, UTC time and input SHA-256 |
+| convert | `--consent-log PATH` | none | Also append that record as one JSON line to PATH |
 
 Resource-limit hits (ZIP bomb ratio, member or total size, `--max-bytes`, `--timeout`, memory)
 are always exit 3 `refused`, never exit 2. Exit 3 is not only "no sandbox".
 
-## Canonical examples (real 0.1.2 output, trimmed)
+## Canonical examples (real 0.1.2 output, trimmed; 0.1.3 adds `conversion_attempted`, `output_written`, `consent` to convert)
 Clean OOXML, exit 0:
 ```json
 {"status": "ok", "family": "writer", "detected_risks": [], "overall_risk": "none",
@@ -99,5 +101,5 @@ ZIP bomb, exit 3:
 Risky input to the converter without consent, exit 3:
 ```json
 {"ok": false, "status": "refused", "exit_reasons": ["input-risks"],
- "error": "input has detected risks (ole-package); convert only if the user accepts that, with --allow-risky-input", "exit_code": 3}
+ "error": "input has detected risks (ole-package); convert only if the user accepts that, with --allow-risky-input --consent \"...\"", "exit_code": 3}
 ```

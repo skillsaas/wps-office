@@ -2,7 +2,11 @@
 
 Load this when the question is "can my WPS run this macro?", or the user is on a phone, a Mac,
 or the international (wps.com) build. Nothing here was tested on a device; each row names its
-source and how strong it is. Read 2026-10-13.
+source and how strong it is.
+
+Knowledge freshness: every row was read on 2026-10-13 from the pages listed under Sources.
+Editions and macro support change with WPS releases and differ between wps.cn and wps.com, so
+recheck a row before telling a user something they will pay for or depend on.
 
 Evidence labels used below: **official** (wps.cn or wps.com article or staff answer),
 **community** (forum user), **unverified** (no source found). Nothing in this file is

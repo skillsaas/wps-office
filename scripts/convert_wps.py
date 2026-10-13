@@ -4,7 +4,7 @@
 Usage:
   python <skill-dir>/scripts/convert_wps.py IN OUT --to docx|xlsx|pptx|pdf|odt|ods|odp
          [--json] [--max-bytes N] [--timeout S] [--max-memory MB] [--soffice PATH]
-         [--force] [--allow-risky-input]
+         [--force] [--allow-risky-input --consent TEXT [--consent-log PATH]]
 
 Typical use: turn a Kingsoft .wps/.et/.dps (or a .doc/.xls/.ppt) into .docx,
 .xlsx or .pptx so Office libraries and Microsoft Office can read it, or make a
@@ -43,6 +43,9 @@ Exit codes:
 import argparse
 import stat
 import json
+import re
+import time
+import hashlib
 import os
 import shutil
 import signal
@@ -206,6 +209,41 @@ def copy_nofollow(src, dst):
             os.close(fd)
 
 
+
+def engine_version(soffice):
+    """LibreOffice build, read from program/versionrc (version.ini on Windows).
+
+    Reading a file avoids starting LibreOffice a second time for each
+    conversion. Returns a short string or None; it is informative only.
+    """
+    try:
+        prog = os.path.dirname(os.path.realpath(soffice))
+        for n in ("versionrc", "version.ini"):
+            pth = os.path.join(prog, n)
+            if os.path.isfile(pth) and os.path.getsize(pth) < 65536:
+                kv = {}
+                with open(pth, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            kv[k.strip()] = v.strip()
+                major = re.match(r"LibreOffice_(\d+(?:\.\d+)?)", kv.get("UpdateID", ""))
+                parts = [("LibreOffice " + major.group(1)) if major else "LibreOffice",
+                         ("build " + kv["buildid"]) if kv.get("buildid") else "",
+                         kv.get("Vendor", "")]
+                return clean(" ".join(x for x in parts if x), 120)
+    except OSError:
+        pass
+    return None
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for b in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(b)
+    return h.hexdigest()
+
 def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
@@ -220,17 +258,29 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="replace OUT; keeps no backup")
     ap.add_argument("--max-memory", type=int, default=4096, help="address-space cap for LibreOffice, MB")
     ap.add_argument("--dry-run", action="store_true", help="inspect and print the plan; do not run LibreOffice or write anything")
-    ap.add_argument("--allow-risky-input", action="store_true", help="convert even if the input has medium or high detected risks (still exit 1)")
+    ap.add_argument("--allow-risky-input", action="store_true",
+                    help="convert even if the input has medium or high detected risks (still sandboxed, still exit 1); needs --consent")
+    ap.add_argument("--consent", metavar="TEXT",
+                    help="the user's own words accepting the listed risks; recorded in the JSON (required with --allow-risky-input)")
+    ap.add_argument("--consent-log", metavar="PATH", help="also append one JSON line per consented conversion to PATH")
     ap.add_argument("--version", action="version", version="convert_wps.py " + wpslib.VERSION)
+    argv = sys.argv[1:] if argv is None else list(argv)
     try:
         a = ap.parse_args(argv)
     except SystemExit as e:
+        if e.code and "--json" in argv:
+            print(json.dumps({"ok": False, "status": "error", "error": "bad command line (see --help)", "tool": "convert_wps.py",
+                              "version": wpslib.VERSION, "schema_version": wpslib.SCHEMA_VERSION, "exit_reasons": [],
+                              "conversion_attempted": False, "output_written": False, "exit_code": 2}, indent=1))
         return 2 if e.code else 0
     r = {"ok": True, "status": "ok", "error": None, "tool": "convert_wps.py", "version": wpslib.VERSION, "schema_version": wpslib.SCHEMA_VERSION, "exit_reasons": [],
-         "input_family": None, "engine": None, "sandbox": None, "output": None, "output_check": None}
+         "input_family": None, "engine": None, "sandbox": None, "output": None, "output_check": None,
+         "conversion_attempted": False, "output_written": False, "consent": None}
     code, work, tmp_out = 0, None, None
     try:
         out = os.path.abspath(a.output)
+        if a.allow_risky_input and not (a.consent or "").strip():
+            raise Refusal("--allow-risky-input needs --consent \"<the user's words>\": an agent may not grant consent by itself")
         if not os.path.isfile(a.input):
             raise FormatError("input is not a regular file")
         if os.path.getsize(a.input) > a.max_bytes:
@@ -268,7 +318,7 @@ def main(argv=None):
             bw = shutil.which("bwrap") if sys.platform.startswith("linux") else None
             blockers = []
             if risky and not a.allow_risky_input:
-                blockers.append("input has detected risks (%s): needs the user's consent and --allow-risky-input" % ", ".join(sorted(set(risky))))
+                blockers.append("input has detected risks (%s): needs the user's consent, then --allow-risky-input --consent \"...\"" % ", ".join(sorted(set(risky))))
             if not bw:
                 blockers.append("no bubblewrap sandbox on this system (Linux only)")
             if not soffice:
@@ -283,7 +333,13 @@ def main(argv=None):
         if risky:
             r["exit_reasons"].append("input-risks")
             if not a.allow_risky_input:
-                raise Refusal("input has detected risks (%s); convert only if the user accepts that, with --allow-risky-input" % ", ".join(sorted(set(risky))))
+                raise Refusal("input has detected risks (%s); convert only if the user accepts that, with --allow-risky-input --consent \"...\"" % ", ".join(sorted(set(risky))))
+            r["consent"] = {"text": clean(a.consent, 500), "risks_accepted": sorted(set(risky)),
+                            "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "input_sha256": sha256_file(a.input)}
+            if a.consent_log:
+                with open(a.consent_log, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(dict(r["consent"], input=clean(os.path.abspath(a.input), 300), target=a.to), ensure_ascii=True) + "\n")
         if not soffice:
             raise FormatError("LibreOffice (soffice) not found. Install it: Debian/Ubuntu 'sudo apt install libreoffice-core bubblewrap', "
                               "Fedora 'sudo dnf install libreoffice-core bubblewrap'; or see references/fallbacks.md")
@@ -313,8 +369,8 @@ def main(argv=None):
         r["memory_limit_mb"] = mem // (1024 * 1024)
         if mclamped:
             r["notes"] = ["--max-memory %d MB is above this process's hard limit (ulimit -v); using %d MB" % (a.max_memory, r["memory_limit_mb"])]
-        vrc, vso, _vse = run(bwrap_cmd(bwrap, work, [soffice, "--version"]), 60, env, mem, fsz)
-        r["engine_version"] = clean(vso.strip(), 120) or None
+        r["engine_version"] = engine_version(soffice)
+        r["conversion_attempted"] = True
         rc, so, se = run(cmd, a.timeout, env, mem, fsz)
         res = single_output(os.path.join(work, "out"), a.max_bytes * 4, rc, se or so)
         tmp_out = out + ".partial-%d" % os.getpid()
@@ -322,6 +378,7 @@ def main(argv=None):
         os.replace(tmp_out, out)
         tmp_out = None
         r["output"] = out
+        r["output_written"] = True
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             pcode = inspect_wps.main([out, "--json"])

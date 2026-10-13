@@ -97,17 +97,21 @@ python3 <skill-dir>/scripts/convert_wps.py budget.xls /tmp/out/budget.xlsx --to 
 ```
 ```json
 {"ok": false, "status": "refused", "exit_reasons": ["input-risks"], "exit_code": 3,
- "error": "input has detected risks (ole-package); convert only if the user accepts that, with --allow-risky-input"}
+ "error": "input has detected risks (ole-package); convert only if the user accepts that, with --allow-risky-input --consent \"...\""}
 ```
 Tell the user: the file embeds other files as OLE packages (they can carry programs); nothing
 was converted. Ask: "Convert anyway in the sandbox? The embedded files are not opened." Only
 after a clear yes:
 ```bash
-python3 <skill-dir>/scripts/convert_wps.py budget.xls /tmp/out/budget.xlsx --to xlsx --allow-risky-input --json
+python3 <skill-dir>/scripts/convert_wps.py budget.xls /tmp/out/budget.xlsx --to xlsx --allow-risky-input \
+  --consent "User said: convert it, I made this file" --json
 ```
 ```json
 {"status": "findings", "exit_reasons": ["input-risks"], "exit_code": 1,
- "engine_version": "LibreOffice 25.2.3.2 520(Build:2)", "memory_limit_mb": 4096,
+ "conversion_attempted": true, "output_written": true,
+ "consent": {"text": "User said: convert it, I made this file", "risks_accepted": ["ole-package"],
+   "time_utc": "2026-10-13T15:01:17Z", "input_sha256": "d96a5644...78507"},
+ "engine_version": "LibreOffice 25 build 520(Build:2) The Document Foundation/Debian", "memory_limit_mb": 4096,
  "output_check": {"family": "spreadsheet", "overall_risk": "none", "detected_risks": [], "complete": true, "macros_left": []}}
 ```
 Tell the user: converted with LibreOffice in the sandbox. The output check found no embedded
@@ -123,3 +127,39 @@ python3 <skill-dir>/scripts/inspect_wps.py big.xlsx --json
 ```
 Tell the user: the file looks like a ZIP bomb (a small file that expands enormously); it was not
 unpacked. Do not raise limits to "try again"; ask where the file came from.
+
+## 7. Bad case: "Check this file" and it is password-protected
+```bash
+python3 <skill-dir>/scripts/inspect_wps.py offer.docx --json
+```
+Real 0.1.3 output (fixture `encrypted_ooxml.docx`, trimmed):
+```json
+{"status": "findings", "family": "encrypted-ooxml",
+ "format": "password-protected OOXML package (EncryptionInfo + EncryptedPackage)",
+ "complete": false, "incomplete": ["encrypted"], "coverage_complete": false,
+ "detected_risks": [{"risk": "medium", "kind": "encrypted", "category": "coverage",
+   "detail": "password-protected: contents cannot be inspected without the password"}],
+ "exit_reasons": ["incomplete"], "exit_code": 1}
+```
+Say: "This file is password-protected, so I could not look inside it at all: no result about
+macros or links is possible. If you trust the sender, open it in WPS with the password, save an
+unprotected copy under a new name, and I will check that copy." Never call it clean, never try
+to guess or crack the password, and do not convert it (the converter refuses encrypted input).
+
+## 8. Partial coverage: a clean list that is not the whole story
+```bash
+python3 <skill-dir>/scripts/inspect_wps.py report.wps --json
+```
+Real 0.1.3 output (fixture `kingsoft.wps`, trimmed):
+```json
+{"status": "ok", "family": "writer", "wps_markers": ["KSOProductBuildVer", "WPS Office"],
+ "complete": true, "coverage_complete": false,
+ "coverage_gaps": ["binary-streams-not-parsed", "jsa-in-binary-unknown"],
+ "detected_risks": [], "exit_code": 0}
+```
+`complete: true` means the file was read without damage; `coverage_complete: false` means some
+checks do not exist for this layout. Here the Writer text stream is not parsed (so DDE fields or
+links inside it are not seen), and where WPS keeps JS macros in a binary file is not known. Say:
+"This is a WPS Writer file. No macro storage, embedded object or remote template was found, but
+the document text itself was not scanned for fields and links, and WPS JS macros in this binary
+format cannot be checked. Converting it to .docx (sandboxed) lets me check those too."

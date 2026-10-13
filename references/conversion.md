@@ -10,7 +10,7 @@ Check it (fidelity checklist at the end). Preview the plan first with `--dry-run
 | Version | Status |
 | :--- | :--- |
 | 25.2.3.2 | Tested here (Debian package): .doc renamed .wps to .docx, .xls renamed .et to .xlsx, real WPS-saved .xls (Tika sample) to .xlsx, canary |
-| Others | Not tested. The converter records the version it ran (`engine_version`) and does not refuse other versions |
+| Others | Not tested. The converter records the installed build from `program/versionrc` (`engine_version`) and does not refuse other versions |
 
 ## Which route
 | Situation | Route | Fidelity |
@@ -27,7 +27,7 @@ WPS Office has no documented command-line converter; the Linux launchers (`wps`,
 1. `inspect_wps.py FILE --json`. `error` or `refused`: stop and report. `works`: only docx, odt, pdf.
 2. Encrypted: ask the user to save an unprotected copy in WPS. Stop.
 3. Medium or high `detected_risks`: tell the user; convert only if they agree
-   (`--allow-risky-input`, exit 1 expected). Prefer asking for a WPS Save As instead.
+   (`--allow-risky-input --consent "..."`, exit 1 expected). Prefer asking for a WPS Save As instead.
 4. WPS available to the user and fidelity matters: WPS Save As. Else Linux with bwrap:
    `convert_wps.py`. Else macOS/Windows: the converter in a Linux VM or container.
 5. DISPIMG pictures in a ZIP spreadsheet: `cellimages.py --extract` before converting.

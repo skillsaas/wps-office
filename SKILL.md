@@ -1,10 +1,10 @@
 ---
 name: wps-office
-description: "Use when a user has a WPS Office (Kingsoft) file or task: .wps/.wpt Writer, .et/.ett Spreadsheets, .dps/.dpt Presentation, WPS-saved .docx/.xlsx/.pptx or PDF; when Word or Excel will not open a WPS file, Excel shows #NAME? or =DISPIMG(\"ID_...\") where WPS showed pictures, or a .wps turns out to be Microsoft Works; when converting WPS files to Office formats or PDF; when checking a WPS file for macros (VBA or WPS JS/JSA macros, xl/JDEData.bin), remote templates, DDE, embedded objects or metadata (KSOProductBuildVer) before sharing; or when writing WPS JS macros, wpsjs add-ins, KDocs AirScript, or running WPS for Linux (wps, et, wpp, wpspdf). Not needed for plain Microsoft Office files with no WPS link; use the Word, Excel or PowerPoint skills."
+description: "Use when a user has a WPS Office (Kingsoft) file or task: a .wps, .et or .dps (or .wpt/.ett/.dpt) that Word, Excel or PowerPoint will not open; Excel showing #NAME? or =DISPIMG(\"ID_...\") where WPS showed in-cell pictures; a .wps that may be Microsoft Works; converting WPS files to docx/xlsx/pptx/pdf in a sandbox; checking a WPS file for VBA or WPS JS (JSA) macros, remote templates, DDE, embedded objects or metadata before opening or sharing; writing WPS JS macros, wpsjs add-ins or KDocs AirScript; WPS for Linux. Not for plain Microsoft Office files with no WPS link."
 license: MIT
 compatibility: "Python 3.9+ standard library only. convert_wps.py also needs LibreOffice and, on Linux, bubblewrap (bwrap); without bwrap it refuses. Smoke tests run on Linux; the CI workflow covers Linux, macOS and Windows (not yet run: repo not pushed). WPS Office itself was not installed or run."
 metadata:
-  version: "0.1.2"
+  version: "0.1.3"
   updated: "2026-10-13"
   last-verified: "2026-10-13"
   risk: "medium"
@@ -44,6 +44,19 @@ command -v soffice bwrap                                      # converter needs 
 ```
 No Python 3.9+? Do not improvise a parser and do not open the file in an app to "look": see
 `references/fallbacks.md` or ask the user.
+
+**No LibreOffice or bwrap (macOS, Windows, most sandboxes)?** You can still identify the file,
+list its risks and metadata, and save DISPIMG pictures; only conversion is unavailable. For the
+text, ask the user to open it in WPS and Save As `.docx`/`.xlsx`/`.pptx`, then inspect that copy.
+
+**Safe to open is not safe to convert.** Inspection never runs the file, so it is always fine.
+Converting runs LibreOffice on it (sandboxed). With medium or high risks, the default advice is
+"do not open it in an office app; ask the sender for a clean copy", and conversion waits for the
+user's explicit yes (see "Ask the user before").
+
+Install for an agent in one step: `python3 scripts/install_skill.py --claude` (or
+`--claude-project`, or `--dest <agent skills folder>`); it copies this folder to
+`<skills>/wps-office/` and refuses to overwrite. What was tested on what: `VALIDATION.md`.
 
 ## Router: task, first command, reference
 | Task | Run first (read-only) | Then | Load |
@@ -123,9 +136,12 @@ open, render, run or upload them automatically.
 - Converting with `--force` (replaces the output; no backup).
 - Uploading anything to WPS cloud or KDocs, or running an AirScript webhook (it runs code in their document).
 - Installing WPS, LibreOffice, bubblewrap or fonts.
-- Extracting pictures from, or converting, a file with medium or high detected risks. Flow:
+- Extracting pictures from a file with high detected risks. If the user already asked for the
+  pictures after you told them the findings, that request is the consent; say what you saved.
+- Converting a file with medium or high detected risks. Flow:
   run the converter (it refuses, exit 3, `exit_reasons: input-risks`) or `--dry-run`; tell the
-  user the specific findings; only after an explicit yes, rerun with `--allow-risky-input`.
+  user the specific findings; only after an explicit yes, rerun with `--allow-risky-input --consent "<their words>"`
+  (the JSON records the consent; `--consent-log PATH` also appends it to a file).
   That flag is consent to attempt the conversion, not a safety override: the sandbox and every
   limit still apply, and a finished run exits 1 because the input had risks.
 - Sending a file that failed `--share-check`.
@@ -136,7 +152,7 @@ open, render, run or upload them automatically.
 | 0 | `ok` | Done, nothing at or above the threshold | The result, plus `not_checked` |
 | 1 | `findings` | Done, but see `exit_reasons`: risk threshold, share blockers, skipped items, incomplete report, risky input or output | Each reason; "incomplete" first if `complete` is false |
 | 2 | `error` | Not an office file, damaged, unsupported, bad option, LibreOffice missing, or an internal parser error (still JSON) | What the file really is and the next step |
-| 3 | `refused` | A limit or safety rule: size, time, memory, ZIP bomb or ZIP rules, DOCTYPE, output exists, no sandbox, risky input without `--allow-risky-input` | Which rule; do not work around it |
+| 3 | `refused` | A limit or safety rule: size, time, memory, ZIP bomb or ZIP rules, DOCTYPE, output exists, no sandbox, risky input without `--allow-risky-input --consent`, `--allow-risky-input` without `--consent` | Which rule; do not work around it |
 
 ## Verification checklist
 - [ ] Family and format reported from bytes, with `extension_matches`.
@@ -159,7 +175,9 @@ open, render, run or upload them automatically.
 - Scripts: standard-library Python. **Tested only on Linux** (Python 3.13.5 and 3.9). The CI
   workflow targets Linux, macOS and Windows but has not run yet (repo not pushed).
 - Real WPS-saved files tested: six `.doc/.xls/.ppt/.docx/.xlsx/.pptx` from WPS Office 11.1
-  (Apache Tika corpus, `tests/samples/`). No native `.wps/.et/.dps` from WPS was available.
+  (Apache Tika corpus, `tests/samples/`), plus one third-party DISPIMG workbook (not WPS-saved).
+  No native `.wps/.et/.dps`, WPS-saved DISPIMG or JS-macro file under a public license was found;
+  the full matrix is in `VALIDATION.md`.
 - Converter limits: `--max-memory` default 4096 MB (clamped to the process's `ulimit -v`),
   `--timeout` 120 s, `--max-bytes` 50 MB.
 - `convert_wps.py` sandboxing uses bubblewrap, which exists only on Linux. On macOS and Windows

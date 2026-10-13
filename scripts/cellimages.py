@@ -48,7 +48,7 @@ from wpslib import Refusal, FormatError, clean  # noqa: E402
 MAGIC = [(b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"),
          (b"BM", "bmp"), (b"II*\x00", "tif"), (b"MM\x00*", "tif"), (b"\xd7\xcd\xc6\x9a", "wmf")]
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-ID_RE = re.compile(r'DISPIMG\(\s*"(ID_[0-9A-Fa-f]{1,64})"')
+ID_RE = re.compile(r'DISPIMG\(\s*"(ID_[0-9A-Za-z_-]{1,64})"')
 
 
 def image_ext(b):

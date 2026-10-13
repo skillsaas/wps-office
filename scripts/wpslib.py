@@ -25,7 +25,7 @@ import zipfile
 import zlib
 import xml.etree.ElementTree as ET
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 SCHEMA_VERSION = "1"
 
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -93,6 +93,8 @@ EXEC_EXT = {"exe", "com", "scr", "pif", "bat", "cmd", "vbs", "vbe", "js", "jse",
             "docm", "xlsm", "pptm", "dotm", "xltm", "xlam", "ppam", "sh", "command", "app"}
 HIGH_SCHEMES = {"file", "smb", "unc", "javascript", "vbscript", "data", "mhtml", "its", "ms-its",
                 "shell", "search", "search-ms", "ms-msdt", "ms-search", "jar", "res", "cdl"}
+# Hyphens removed, so "search-ms", "searchms" and "se-arch-ms" all match.
+HIGH_FLAT = {h.replace("-", "") for h in HIGH_SCHEMES}
 
 
 def link_target(raw):
@@ -101,23 +103,30 @@ def link_target(raw):
     Percent-decodes until stable (at most 8 passes), NFKC-normalizes, strips
     format, whitespace and control characters (also inside the scheme token),
     then reads the scheme. A relative target whose last segment has an
-    executable or script extension (EXEC_EXT) is high. Allowlist: http, https, mailto and
+    executable or script extension (EXEC_EXT) is high, except .com, which is
+    medium because "archive.com" is more often a domain than a DOS program. Allowlist: http, https, mailto and
     in-document targets ("#x", relative). Every ms-* scheme (ms-msdt,
     ms-excel:ofe|u|..., ms-word, ...) and the HIGH_SCHEMES are high; any other
     scheme is medium.
     """
     t = raw or ""
+    stable = False
     for _ in range(8):                      # decode until stable (capped)
         d = urllib.parse.unquote(t)
         if d == t:
+            stable = True
             break
         t = d
+    # Still changing after 8 passes: no honest link needs that, so it is high.
+    stable = stable or urllib.parse.unquote(t) == t
     # NFKC folds fullwidth and other compatibility forms (fullwidth m becomes m);
     # then format characters (Cf: soft hyphen, zero-width, bidi) and every
     # whitespace or control character inside the scheme token are removed.
     t = unicodedata.normalize("NFKC", t)
-    t = re.sub("[\u00ad\u2010-\u2015\u2212\ufe63]", "-", t)   # hyphen look-alikes, incl. soft hyphen
+    # Cf first (soft hyphen U+00AD is Cf and is invisible, so it is removed,
+    # not read as a hyphen), then visible hyphen look-alikes become "-".
     t = "".join(ch for ch in t if unicodedata.category(ch) != "Cf")
+    t = re.sub("[\u2010-\u2015\u2212\ufe63\uff0d]", "-", t)
     t = _STRIP.sub("", t).strip().strip("\x00")
     colon = t.find(":")
     if 0 < colon < 40:
@@ -139,11 +148,15 @@ def link_target(raw):
         host = re.split(r"[\\/]", t.lstrip("\\/"), maxsplit=1)[0]
     last = re.split(r"[\\/]", t.split("#", 1)[0].split("?", 1)[0])[-1].rstrip(". ").lower()
     is_exec = "." in last and last.rsplit(".", 1)[1] in EXEC_EXT
-    if scheme == "relative" and is_exec:
+    if not stable:
         risk = "high"
+    elif scheme == "relative" and is_exec and not last.endswith(".com"):
+        risk = "high"
+    elif scheme == "relative" and last.endswith(".com"):
+        risk = "medium"   # "archive.com" may be a domain name or a DOS program
     elif scheme in SAFE_SCHEMES or scheme == "relative":
         risk = "none"
-    elif scheme in HIGH_SCHEMES or scheme.startswith("ms-") or scheme.replace("-", "") in HIGH_SCHEMES:
+    elif scheme in HIGH_SCHEMES or scheme.replace("-", "").startswith("ms") or scheme.replace("-", "") in HIGH_FLAT:
         risk = "high"
     else:
         risk = "medium"
@@ -454,10 +467,11 @@ def _has_dtd(data):
     return False
 
 
-# Complete comments and CDATA sections cannot declare a DTD, so a DOCTYPE
-# mentioned inside them is not refused. An unterminated comment is not removed.
-_COMMENT_B = re.compile(rb"<!--.*?-->|<!\[CDATA\[.*?\]\]>", re.S)
-_COMMENT_S = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>", re.S)
+# Complete comments, CDATA sections and processing instructions cannot declare a DTD, so a DOCTYPE
+# mentioned inside them is not refused. An unterminated one is not removed.
+# The regex scans left to right, so whichever construct opens first wins.
+_COMMENT_B = re.compile(rb"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>", re.S)
+_COMMENT_S = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>", re.S)
 
 
 def parse_xml(data):

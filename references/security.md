@@ -9,19 +9,25 @@ these checks", never "safe". There is no malware scan. Each risk has a `category
 (code can run), `fetch` (something is loaded from elsewhere), `deception` (the file misleads),
 `privacy`, `coverage` (a check could not see inside), `compatibility`.
 
-## Link scheme policy (version 0.1.2, `scripts/wpslib.py` `link_target`)
-1. Percent-decode until stable (at most 8 passes), NFKC-normalize (fullwidth letters fold),
-   map hyphen look-alikes (soft hyphen, U+2010 to U+2015, U+2212) to `-`, delete format
-   characters (Unicode Cf) and any whitespace or control character inside the scheme token.
-2. Allowlist, risk none: `http`, `https`, `mailto`, and relative or `#` targets.
-3. High: `HIGH_SCHEMES` (`file`, drive letters, UNC, `smb`, `javascript`, `vbscript`, `data`,
+## Link scheme policy (version 0.1.3, `scripts/wpslib.py` `link_target`)
+1. Percent-decode until stable (at most 8 passes) and NFKC-normalize (fullwidth letters fold).
+   Then delete format characters (Unicode Cf, which includes the invisible soft hyphen),
+   map visible hyphen look-alikes (U+2010 to U+2015, U+2212, U+FE63, U+FF0D) to `-`, and
+   delete any whitespace or control character inside the scheme token. Cf goes first, so
+   `se` + soft hyphen + `arch-ms` reads as `search-ms`, not `se-arch-ms`. A target that is
+   still percent-encoded after the 8 passes is high: no honest link is encoded 9 times.
+2. High: `HIGH_SCHEMES` (`file`, drive letters, UNC, `smb`, `javascript`, `vbscript`, `data`,
    `mhtml`, `its`, `ms-its`, `shell`, `search`, `search-ms`, `ms-msdt`, `ms-search`, `jar`, `res`,
-   `cdl`), every `ms-*` scheme (`ms-officecmd`, `ms-cxh`, `ms-excel:ofe|u|...`, `ms-word`, ...),
-   and a scheme that matches one of those with hyphens removed.
-4. High: a relative target whose last segment ends in an executable or script extension
+   `cdl`), every scheme starting `ms` once hyphens are removed (`ms-officecmd`, `ms-cxh`,
+   `ms-excel:ofe|u|...`, `ms-word`, `msteams`, ...), and any scheme equal to a `HIGH_SCHEMES`
+   entry when both have their hyphens removed (`HIGH_FLAT`: `searchms`, `s-earch-ms`).
+3. High: a relative target whose last segment ends in an executable or script extension
    (`EXEC_EXT`: exe, scr, bat, cmd, vbs, js, ps1, hta, lnk, msi, docm, xlsm and more).
+   Exception: `.com` is medium, since `archive.com` written without `https://` is far more
+   often a web address than a DOS program. Say so to the user rather than calling it an attack.
+4. Allowlist, risk none: `http`, `https`, `mailto`, and other relative or `#` targets.
 5. Medium: any other scheme (`unusual-link-scheme`).
-Why every `ms-*`: these launch local Office or Windows handlers, and several (`ms-msdt`, the
+Why every `ms*`: these launch local Office or Windows handlers, and several (`ms-msdt`, the
 `ms-office` URI forms) were exploited. Legitimate uses exist (`ms-word:ofe|u|https://...` in
 SharePoint links); expect them flagged, and tell the user why instead of calling them malicious.
 A new handler needs a code change here; the list is versioned with the scripts.
@@ -35,7 +41,7 @@ A new handler needs a code change here; the list is versioned with the scripts.
 | high | `activex` | ActiveX controls |
 | high | `dde-field` | `DDE`/`DDEAUTO` field can start a program when fields update. Field code is joined across runs before matching; RTF `\fldinst` is checked too |
 | high | `external-attachedTemplate` | Remote template fetched on open (template injection, credential leaks); OOXML settings relationship or RTF `{\*\template ...}` |
-| high | `dangerous-link-scheme` | Any scheme outside http, https, mailto and relative paths that is known dangerous: `file:` (also a drive letter), UNC, `smb:`, `javascript:`, `vbscript:`, `data:`, `ms-msdt:` (Follina), `search-ms:`, `mhtml:`, every `ms-*` handler such as `ms-excel:ofe`. The target is percent-decoded (up to 3 times) and stripped of whitespace and invisible characters first, so ` file:` and `%66ile:` are caught |
+| high | `dangerous-link-scheme` | Any scheme outside http, https, mailto and relative paths that is known dangerous: `file:` (also a drive letter), UNC, `smb:`, `javascript:`, `vbscript:`, `data:`, `ms-msdt:` (Follina), `search-ms:`, `mhtml:`, every `ms*` handler such as `ms-excel:ofe`. The target is percent-decoded until stable (at most 8 passes), NFKC-normalized, stripped of invisible (Cf) characters and then of hyphens for the comparison, so ` file:`, `%66ile:` and `se&shy;arch-ms:` are caught. A relative link ending in an executable type (`run.exe`) is high; `.com` is medium, because `archive.com` is usually a domain |
 | medium | `unusual-link-scheme` | Any other non-allowlisted scheme |
 | high | `renamed-macro-part` | VBA found by relationship type or content type under another part name |
 | high | `dde-formula`, `call-formula`, `dde-link`, `ole-link` | Spreadsheet `app|topic!item` DDE formulas, `CALL`/`REGISTER`/`EXEC`, and `ddeLink`/`oleLink` in `xl/externalLinks/` |
@@ -124,6 +130,23 @@ a hostile output file, which is then inspected and still untrusted), and anythin
 itself contains. If bwrap exists but user namespaces are disabled, bwrap fails to start and the
 converter reports an error rather than running unsandboxed.
 `--allow-risky-input` changes none of this: it only lets the conversion be attempted.
+
+### The user's escape hatch (explicit and logged)
+
+The user, not the agent, decides to convert a risky file. The only way is:
+
+```bash
+python3 <skill-dir>/scripts/convert_wps.py in.et out.xlsx --to xlsx \
+  --allow-risky-input --consent "User: yes, convert it, I made this file" \
+  --consent-log ~/wps-consent.jsonl --json
+```
+
+- `--allow-risky-input` without a non-empty `--consent` is refused (exit 3).
+- The JSON gets `consent`: the text, the risk kinds accepted, the UTC time and
+  the input's SHA-256. `--consent-log` appends the same record as a JSON line.
+- The sandbox, the caps and the output re-inspection still apply; exit 1 still
+  reports the risks. Nothing turns the sandbox off.
+- Put the user's own words in `--consent`. Never write consent the user did not give.
 
 ## Reproduce the canary
 `tests/smoke_test.py` tests `canary_threat_is_real_without_sandbox` and
