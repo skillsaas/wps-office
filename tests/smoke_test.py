@@ -48,6 +48,8 @@ def f(name):
 
 def test(fn):
     name = fn.__name__
+    t0 = time.time()
+    print("RUN  %s" % name, flush=True)
     try:
         res = fn()
         if res == "SKIP" or (isinstance(res, tuple) and res[0] == "SKIP"):
@@ -56,6 +58,7 @@ def test(fn):
             RESULTS.append(("PASS", name, ""))
     except Exception as exc:  # noqa: BLE001
         RESULTS.append(("FAIL", name, "%s: %s" % (type(exc).__name__, exc)))
+    print("     %s %s (%.1f s)" % (RESULTS[-1][0], name, time.time() - t0), flush=True)
     return fn
 
 
