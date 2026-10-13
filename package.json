@@ -1,6 +1,6 @@
 {
   "name": "wps-office",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent skill (SKILL.md) for WPS Office (Kingsoft): identify and inspect .wps, .et, .dps and WPS-saved Office files, find macros (VBA and WPS JS), remote templates, DDE and metadata, recover DISPIMG cell pictures, convert to docx/xlsx/pptx/pdf in a sandbox, and write WPS JS macros, wpsjs add-ins and AirScript.",
   "license": "MIT",
   "author": "Ali Tanveer",

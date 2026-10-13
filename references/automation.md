@@ -3,13 +3,41 @@
 Load this when the user wants code that runs in WPS. The agent writes and explains the code;
 the user runs it in their own WPS. Nothing here was run against WPS (not installed on the box).
 
+Version caveats: API pages were read on 2026-10-13. The open.wps.cn JS API pages carry no
+version number; they describe the current WPS 365 / WPS 2023-era client. `wpsjs` was 2.2.3 on npm
+that day. The AirScript endpoint below is the `v3` path on that date. Members, endpoints and
+headers can change between WPS releases: if a call fails, check the page again before guessing.
+
+## Minimal hello examples (documented patterns, not run here)
+JS macro, Spreadsheets:
+```javascript
+function Hello() {
+    Range("A1").Value2 = "hello from JSA"   // global Range, as in the macro editor
+}
+```
+JS macro, Writer:
+```javascript
+function Hello() {
+    if (Documents.Count === 0) return
+    ActiveDocument.Content.InsertAfter("hello from JSA")
+}
+```
+AirScript over HTTP (the user runs this; the agent never sees the token):
+```bash
+curl -X POST "https://www.kdocs.cn/api/v3/ide/file/FILE_ID/script/SCRIPT_ID/sync_task" \
+  -H "Content-Type: application/json" -H "AirScript-Token: $AIRSCRIPT_TOKEN" \
+  -d '{"Context": {"argv": {}}}'
+```
+`FILE_ID`, `SCRIPT_ID` and the token come from the AirScript editor; keep the token in an
+environment variable and never paste it into chat (airsheet.wps.cn API token page).
+
 ## Which surface
 | Need | Surface | Where it runs | Docs |
 | :--- | :--- | :--- | :--- |
 | Automate one document or workbook, share as one file | JS macro (JSA) in the WPS macro editor, saved in `.xlsm`/`.docm`/`.pptm` | Desktop WPS (Windows, macOS, Linux) | open.wps.cn JS API (Application, Document, CreateObject) |
 | A ribbon button or task pane for many users | WPS add-in (加载项) built with the `wpsjs` CLI | Desktop WPS | open.wps.cn add-in guide; npm `wpsjs` |
 | Cloud document in KDocs (金山文档) | AirScript, optionally triggered over HTTP with a script token | Kingsoft cloud | airsheet.wps.cn AirScript docs |
-| Existing VBA | VBA in WPS | Depends on edition; not verified | |
+| Existing VBA | VBA in WPS | Paid Windows editions with the VBA component; not the free personal edition | `platforms.md` |
 
 ## JS macros (JSA)
 - Runtime: V8, most ES6 syntax, JavaScript built-ins only; no browser objects such as

@@ -10,7 +10,7 @@
 | `findings`, `incomplete: compound file structure: sector-past-end-of-file` | WPS-saved binary | Re-save in WPS or convert; other readers may reject it |
 | `findings`, `incomplete: encrypted` | Password | Ask the user to save an unprotected copy |
 | `extension-mismatch` | `format` vs name | Rename only in a copy and only to the real type; tell the user |
-| `convert_wps.py` `refused: no sandbox` | OS, `command -v bwrap` | Linux: install bubblewrap. Others: see `fallbacks.md`. Never add `--sandboxed` |
+| `convert_wps.py` `refused: no sandbox` | OS, `command -v bwrap` | Linux: install bubblewrap. Others: see `fallbacks.md`. There is no bypass flag |
 | bwrap fails with "No permissions to create new namespace" | Unprivileged user namespaces disabled (some distros, AppArmor) | Ask the admin, or use a VM or container |
 | `LibreOffice produced no output` (exit 2) | stderr in `error` | Damaged or unsupported file; try `--to pdf`; ask for a re-save in WPS |
 | `LibreOffice did not finish within --timeout` (exit 3) | Size | Retry once with a longer `--timeout` for big trusted files; the process group was killed |
@@ -20,3 +20,7 @@
 | `cellimages.py` `binary (OLE2) spreadsheet` (exit 2) | `.et` container | Save as `.xlsx` in WPS first |
 | JS macro error "ActiveDocument" | No document open | Check `Documents.Count` before using `ActiveDocument` |
 | `et`/`wpp` not found on Linux | `dpkg -L wps-office` | Launcher names vary by build (`references/linux.md`) |
+| `status: error`, `internal error while reading the file` | The JSON `error` names the exception | A parser bug on a malformed file; the file is likely damaged. Re-save in WPS; report the message |
+| `refused: input has detected risks` (convert) | `input_risks` | Ask the user; if they accept, rerun with `--allow-risky-input` (exit 1 is expected) |
+| `refused: pictures add up to more than --max-total` | `cells` count and part sizes | Raise `--max-total` only after the user agrees, or extract on a machine with space |
+| Converter `refused` or LibreOffice crashes under the memory cap | `--max-memory` | Large decks may need `--max-memory 6144`; do not remove the cap |

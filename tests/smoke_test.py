@@ -60,7 +60,7 @@ def test(fn):
 
 
 def kinds(d):
-    return [x["kind"] for x in d["risks"]]
+    return [x["kind"] for x in d["detected_risks"]]
 
 
 # ---------------------------------------------------------------- inspector
@@ -182,7 +182,7 @@ def share_check_clean_and_blocked():
     bl = " ".join(d["share_check"]["blockers"])
     assert rc == 1 and "custom property: KSOProductBuildVer" in bl and "metadata: author" in bl
     rc, d = js("inspect_wps.py", f("kingsoft.wps"), "--share-check")
-    assert rc == 1 and any("binary format" in b for b in d["share_check"]["blockers"])
+    assert rc == 1 and any("coverage incomplete" in b for b in d["share_check"]["blockers"])
 
 
 @test
@@ -254,20 +254,20 @@ def cellimages_list_maps_cells():
 def cellimages_extract_only_real_images():
     out = os.path.join(TMP, "ci1")
     rc, d = js("cellimages.py", f("cellimages.xlsx"), "--extract", out)
-    assert rc == 1 and [s["file"] for s in d["saved"]] == ["sheet1_A1_1.png"]
+    assert rc == 1 and [s["file"] for s in d["saved"]] == ["sheet1_A1.png"]
     assert d["skipped"][0]["reason"].startswith("bytes are not")
-    assert os.listdir(out) == ["sheet1_A1_1.png"]
+    assert os.listdir(out) == ["sheet1_A1.png"]
     if os.name == "posix":
-        assert oct(os.stat(os.path.join(out, "sheet1_A1_1.png")).st_mode & 0o777) == "0o600"
+        assert oct(os.stat(os.path.join(out, "sheet1_A1.png")).st_mode & 0o777) == "0o600"
 
 
 @test
 def cellimages_ok_et_and_dry_run():
     out = os.path.join(TMP, "ci2")
     rc, d = js("cellimages.py", f("cellimages_ok.et"), "--extract", out, "--dry-run")
-    assert rc == 0 and d["would_save"] == ["sheet1_C3_1.png"] and not os.path.exists(out)
+    assert rc == 0 and d["would_save"] == ["sheet1_C3.png"] and not os.path.exists(out)
     rc, d = js("cellimages.py", f("cellimages_ok.et"), "--extract", out)
-    assert rc == 0 and os.listdir(out) == ["sheet1_C3_1.png"]
+    assert rc == 0 and os.listdir(out) == ["sheet1_C3.png"]
     rc, d = js("cellimages.py", f("cellimages_ok.et"), "--extract", out)
     assert rc == 3 and "exists" in d["error"]
 
@@ -316,7 +316,7 @@ def convert_refuses_without_sandbox():
     os.makedirs(fake, exist_ok=True)
     env = dict(os.environ, PATH=fake)
     rc, d = js("convert_wps.py", f("clean.docx"), os.path.join(TMP, "x.pdf"), "--to", "pdf", "--soffice", soffice(), env=env)
-    assert rc == 3 and "sandbox" in d["error"] and "--sandboxed" in d["error"], d
+    assert rc == 3 and "sandbox" in d["error"] and "--sandboxed" not in d["error"], d
 
 
 @test
@@ -429,7 +429,7 @@ def canary_no_network_in_sandbox():
     _H.hits = []
     p = os.path.join(TMP, "canary.docx")
     make_fixtures.canary_docx(p, srv.server_address[1])
-    rc, d = js("convert_wps.py", p, os.path.join(TMP, "canary.pdf"), "--to", "pdf")
+    rc, d = js("convert_wps.py", p, os.path.join(TMP, "canary.pdf"), "--to", "pdf", "--allow-risky-input")
     time.sleep(0.5)
     srv.shutdown()
     assert rc in (0, 1) and d["output"], d
@@ -494,6 +494,170 @@ def referenced_files_exist():
     pkg = json.load(open(os.path.join(ROOT, "package.json")))
     for entry in pkg["files"]:
         assert os.path.exists(os.path.join(ROOT, entry.rstrip("/").replace("*.py", ""))), entry
+
+
+@test
+def link_schemes_normalized():
+    rc, d = js("inspect_wps.py", f("links.docx"))
+    high = [x for x in d["detected_risks"] if x["kind"] == "dangerous-link-scheme"]
+    assert len(high) == 7, d["detected_risks"]
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import wpslib
+    for raw, scheme in (("ms-msdt:/id x", "ms-msdt"), (" file:///c:/x", "file"), ("%66ile://s/x", "file"),
+                        ("%2566ile://s/x", "file"), ("search-ms:q", "search-ms"), ("mhtml:http://a/b!c", "mhtml"),
+                        ("ms-excel:ofe|u|http://a/b", "ms-excel"), ("\\\\srv\\s", "unc"), ("C:\\x.exe", "file"),
+                        ("fi\u200ble:///x", "file")):
+        _n, sc, _h, risk = wpslib.link_target(raw)
+        assert sc == scheme and risk == "high", (raw, sc, risk)
+    assert wpslib.link_target("https://ok.example/")[3] == "none"
+
+
+@test
+def utf16_doctype_refused():
+    rc, d = js("inspect_wps.py", f("doctype16.docx"))
+    assert rc == 3 and "DOCTYPE" in d["error"], d
+
+
+@test
+def writer_field_and_hidden_text_rules():
+    rc, d = js("inspect_wps.py", f("split_dde.docx"))
+    assert "dde-field" in kinds(d) and d["hidden"].get("hidden_text_runs") == 1, d
+    rc, d = js("inspect_wps.py", f("vanish_off.docx"))
+    assert not d["hidden"].get("hidden_text_runs"), d
+
+
+@test
+def renamed_vba_and_unknown_binary_part():
+    _, d = js("inspect_wps.py", f("renamed_vba.docx"))
+    assert {"macros", "renamed-macro-part"} <= set(kinds(d)), kinds(d)
+    _, d = js("inspect_wps.py", f("unknown_bin.docx"))
+    assert "unknown-binary-or-script-part" in kinds(d)
+
+
+@test
+def spreadsheet_formula_risks_and_hidden_rows():
+    rc, d = js("inspect_wps.py", f("formulas.xlsx"), "--share-check")
+    k = set(kinds(d))
+    assert {"dde-link", "dde-formula", "call-formula", "web-formula", "hyperlink-formula", "formula-like-text"} <= k, k
+    assert d["hidden"]["rows"] == 1 and d["hidden"]["columns"] == 1 and rc == 1
+
+
+@test
+def odf_macros_and_events():
+    _, d = js("inspect_wps.py", f("macro.odt"))
+    assert {"macros", "odf-event-script"} <= set(kinds(d)), kinds(d)
+
+
+@test
+def rtf_template_dde_and_rtf_under_docx():
+    _, d = js("inspect_wps.py", f("template.rtf"))
+    assert {"external-attachedTemplate", "dde-field"} <= set(kinds(d)), kinds(d)
+    _, d = js("inspect_wps.py", f("rtf_named.docx"))
+    assert "extension-mismatch" in kinds(d) and d["extension_matches"] is False
+
+
+@test
+def detected_risks_framing_and_exit_reasons():
+    rc, d = js("inspect_wps.py", f("macro.wps"), "--fail-on-risk", "high")
+    assert rc == 1 and "risk-threshold" in d["exit_reasons"] and d["assessment"] and "risks" not in d
+    assert any("malware" in x for x in d["not_checked"])
+
+
+@test
+def fuzz_never_crashes():
+    """Seeded mutation fuzz: every input gives JSON and an exit code in 0..3."""
+    import random
+    import io
+    import contextlib
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import inspect_wps
+    import cellimages
+    rnd = random.Random(20261013)
+    seeds = [open(f(n), "rb").read() for n in ("clean.docx", "kingsoft.wps", "cellimages.xlsx", "formulas.xlsx",
+                                                "macro.odt", "template.rtf", "encrypted.et", "sheet.et")]
+    path = os.path.join(TMP, "fuzz.bin")
+    n = int(os.environ.get("WPS_FUZZ_N", "300"))
+    for i in range(n):
+        b = bytearray(rnd.choice(seeds))
+        for _ in range(rnd.randint(1, 12)):
+            op = rnd.random()
+            if not b:
+                break
+            pos = rnd.randrange(len(b))
+            if op < 0.6:
+                b[pos] = rnd.randrange(256)
+            elif op < 0.8:
+                del b[pos:pos + rnd.randint(1, 64)]
+            else:
+                b[pos:pos] = bytes(rnd.randrange(256) for _ in range(rnd.randint(1, 16)))
+        open(path, "wb").write(bytes(b))
+        for mod, args in ((inspect_wps, [path, "--json", "--timeout", "10"]), (cellimages, [path, "--json"])):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = mod.main(args)
+            d = json.loads(buf.getvalue())
+            assert rc in (0, 1, 2, 3) and d["exit_code"] == rc, (i, rc)
+            assert "Traceback" not in buf.getvalue()
+
+
+@test
+def cellimages_shared_picture_written_once_under_ulimit():
+    if not sys.platform.startswith("linux"):
+        return ("SKIP", "RLIMIT_AS is enforced reliably only on Linux")
+    import random
+    big = make_fixtures.PNG[:-12] + bytes(random.Random(1).randrange(256) for _ in range(9 * 1024 * 1024)) + make_fixtures.PNG[-12:]
+    cells = "".join('<row r="%d">%s</row>' % (i, make_fixtures.dispimg_cell("A%d" % i, make_fixtures.ID1)) for i in range(1, 5001))
+    p = os.path.join(TMP, "shared.xlsx")
+    make_fixtures.xlsx(p, cells, extra=[("xl/cellimages.xml", make_fixtures.cellimages([make_fixtures.ID1])),
+                                        ("xl/_rels/cellimages.xml.rels", make_fixtures.RELS % make_fixtures.rel("rId1", "image", "media/image1.png")),
+                                        ("xl/media/image1.png", big)])
+    out = os.path.join(TMP, "shared_out")
+    code = ("import resource,sys,runpy;resource.setrlimit(resource.RLIMIT_AS,(1024**3,1024**3));"
+            "sys.argv=['cellimages.py',%r,'--extract',%r,'--json'];runpy.run_path(%r,run_name='__main__')"
+            % (p, out, os.path.join(ROOT, "scripts", "cellimages.py")))
+    pr = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    d = json.loads(pr.stdout)
+    assert pr.returncode == 0, (pr.returncode, d.get("error"))
+    assert len(d["saved"]) == 1 and d["saved"][0]["shared_by"] == 5000 and len(os.listdir(out)) == 1
+    rc, d = js("cellimages.py", p, "--extract", os.path.join(TMP, "shared_cap"), "--max-total", "1000")
+    assert rc == 3 and "max-total" in d["error"] and not os.path.exists(os.path.join(TMP, "shared_cap"))
+
+
+@test
+def convert_output_copy_refuses_symlinks_and_has_no_bypass():
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import convert_wps
+    from wpslib import Refusal
+    src = open(os.path.join(ROOT, "scripts", "convert_wps.py")).read()
+    assert "--sandboxed" not in src and "--max-memory" in src
+    d = os.path.join(TMP, "outdir")
+    os.makedirs(d)
+    if hasattr(os, "symlink"):
+        try:
+            os.symlink(os.path.join(ROOT, "SKILL.md"), os.path.join(d, "x.pdf"))
+        except OSError:
+            return ("SKIP", "cannot create symlinks here")
+        try:
+            convert_wps.single_output(d, 10 ** 9)
+            raise AssertionError("symlink accepted")
+        except Refusal:
+            pass
+        os.remove(os.path.join(d, "x.pdf"))
+    open(os.path.join(d, "a.pdf"), "w").write("a")
+    open(os.path.join(d, "b.pdf"), "w").write("b")
+    try:
+        convert_wps.single_output(d, 10 ** 9)
+        raise AssertionError("two outputs accepted")
+    except Refusal:
+        pass
+
+
+@test
+def convert_refuses_risky_input_by_default():
+    if not soffice() or not sandbox_ok():
+        return ("SKIP", "needs LibreOffice and a working bwrap")
+    rc, d = js("convert_wps.py", f("macro_under_docx.docx"), os.path.join(TMP, "m.pdf"), "--to", "pdf")
+    assert rc == 3 and "input-risks" in d["exit_reasons"], d
 
 
 def main():

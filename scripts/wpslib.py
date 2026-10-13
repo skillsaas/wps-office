@@ -20,10 +20,13 @@ import re
 import struct
 import time
 import unicodedata
+import urllib.parse
 import zipfile
+import zlib
 import xml.etree.ElementTree as ET
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
+SCHEMA_VERSION = "1"
 
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 ENDOFCHAIN, FREESECT, FATSECT, DIFSECT = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD, 0xFFFFFFFC
@@ -47,8 +50,24 @@ class Deadline:
             raise Refusal("time limit reached (--timeout)")
 
 
-_STRIP = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f"
-                    "\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+_BIDI = "\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069"
+_INVIS = ("\u00ad\u180e\u200b-\u200d\u2028\u2029\u2060-\u2064\ufeff"
+          "\U000e0000-\U000e007f")
+_STRIP = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f" + _BIDI + _INVIS + "]")
+_BIDI_RE = re.compile("[" + _BIDI + "]")
+_INVIS_RE = re.compile("[" + _INVIS + "]")
+
+
+def hidden_chars(text):
+    """Which classes of hidden characters the raw text had: 'bidi', 'invisible'."""
+    if not isinstance(text, str):
+        return []
+    out = []
+    if _BIDI_RE.search(text):
+        out.append("bidi")
+    if _INVIS_RE.search(text):
+        out.append("invisible")
+    return out
 
 
 def clean(text, limit=200):
@@ -62,6 +81,50 @@ def clean(text, limit=200):
     if len(text) > limit:
         text = text[:limit] + "...[cut]"
     return text
+
+
+# ---------------------------------------------------------------- link targets
+SAFE_SCHEMES = {"http", "https", "mailto"}
+HIGH_SCHEMES = {"file", "smb", "unc", "javascript", "vbscript", "data", "mhtml", "its", "ms-its",
+                "shell", "search", "search-ms", "ms-msdt", "ms-search", "jar", "res", "cdl"}
+
+
+def link_target(raw):
+    """One normalizer for every link check: (normalized target, scheme, host, risk).
+
+    Strips whitespace and control/invisible characters, percent-decodes up to
+    three times, then reads the scheme. Allowlist: http, https, mailto and
+    in-document targets ("#x", relative). Every ms-* scheme (ms-msdt,
+    ms-excel:ofe|u|..., ms-word, ...) and the HIGH_SCHEMES are high; any other
+    scheme is medium.
+    """
+    t = raw or ""
+    for _ in range(3):
+        d = urllib.parse.unquote(t)
+        if d == t:
+            break
+        t = d
+    t = _STRIP.sub("", t).strip().strip("\x00")
+    if t.startswith(("\\\\", "//")):
+        scheme = "unc"
+    else:
+        m = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*):", t)
+        scheme = m.group(1).lower() if m else "relative"
+        if len(scheme) == 1:          # C:\path is a local file path
+            scheme = "file"
+    host = None
+    hm = re.match(r"^[A-Za-z][A-Za-z0-9+.\-]*://([^/\\?#]*)", t)
+    if hm:
+        host = hm.group(1).rsplit("@", 1)[-1]
+    elif scheme == "unc":
+        host = re.split(r"[\\/]", t.lstrip("\\/"), maxsplit=1)[0]
+    if scheme in SAFE_SCHEMES or scheme == "relative":
+        risk = "none"
+    elif scheme in HIGH_SCHEMES or scheme.startswith("ms-"):
+        risk = "high"
+    else:
+        risk = "medium"
+    return t, scheme, host, risk
 
 
 def sniff(head):
@@ -190,8 +253,11 @@ class Cfb:
             idx, prefix, depth = stack.pop()
             if idx == NOSTREAM or idx >= len(ents):
                 continue
-            if idx in seen or depth > 32:
+            if idx in seen:
                 self._issue("loop-in-directory")
+                continue
+            if depth > 64:
+                self._issue("directory-tree-too-deep")
                 continue
             seen.add(idx)
             if len(self.entries) >= max_streams:
@@ -298,8 +364,8 @@ def open_zip(data, max_entries=5000, max_total=512 * 1024 * 1024,
              max_member=256 * 1024 * 1024, max_ratio=200):
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile as exc:
-        raise FormatError("bad ZIP: %s" % exc)
+    except ZIP_ERRORS as exc:
+        raise FormatError("bad ZIP: %s: %s" % (type(exc).__name__, clean(str(exc), 120)))
     infos = zf.infolist()
     if len(infos) > max_entries:
         raise Refusal("ZIP has %d entries (cap %d)" % (len(infos), max_entries))
@@ -327,24 +393,49 @@ def open_zip(data, max_entries=5000, max_total=512 * 1024 * 1024,
     return zf
 
 
+ZIP_ERRORS = (zipfile.BadZipFile, zipfile.LargeZipFile, zlib.error, NotImplementedError,
+              EOFError, ValueError, KeyError, RuntimeError, struct.error, OSError)
+
+
 def read_member(zf, name, cap=64 * 1024 * 1024):
-    with zf.open(name) as fh:
-        data = fh.read(cap + 1)
+    try:
+        with zf.open(name) as fh:
+            data = fh.read(cap + 1)
+    except ZIP_ERRORS as exc:
+        raise FormatError("damaged ZIP member %s: %s: %s" % (clean(name, 80), type(exc).__name__, clean(str(exc), 120)))
     if len(data) > cap:
         raise Refusal("ZIP member larger than %d bytes when read: %s" % (cap, clean(name, 80)))
     return data
 
 
-_DTD = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
+_DTD = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.I)
+_ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be")
+
+
+def _has_dtd(data):
+    """True if any plausible decoding shows a DOCTYPE or ENTITY declaration.
+
+    The same check covers UTF-8, UTF-16 and UTF-32 (with or without BOM), so a
+    parser that honours the BOM or the XML declaration cannot see something this
+    check did not. Data is decoded once per encoding with errors ignored.
+    """
+    if re.search(rb"<!\s*(DOCTYPE|ENTITY)", data, re.I):
+        return True
+    if b"\x00" not in data[:4096] and not data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return False
+    for enc in _ENCODINGS:
+        if _DTD.search(data.decode(enc, "ignore")):
+            return True
+    return False
 
 
 def parse_xml(data):
-    if _DTD.search(data[:65536]) or _DTD.search(data):
+    if _has_dtd(data):
         raise Refusal("XML part contains DOCTYPE or ENTITY (refused, entity expansion risk)")
     try:
         return ET.fromstring(data)
-    except ET.ParseError as exc:
-        raise FormatError("XML parse error: %s" % exc)
+    except (ET.ParseError, ValueError, LookupError) as exc:
+        raise FormatError("XML parse error: %s" % clean(str(exc), 160))
 
 
 def local(tag):

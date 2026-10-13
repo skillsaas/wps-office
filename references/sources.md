@@ -25,6 +25,13 @@ Read 2026-10-13. "Tested" means run on the box; everything else is documented, n
 - [MS-DOC], [MS-XLS], [MS-PPT], [MS-OFFCRYPTO] on Microsoft Learn (encryption markers)
 - Microsoft Works detection: libwps https://sourceforge.net/p/libwps/wiki/Home/ and file(1) magic `Magdir/wordprocessors`
 
+## Corroboration for single-source claims (added 0.1.1)
+- 2005+ WPS/ET/DPS use the doc/xls/ppt binary layout: Look Scanned format notes, plus
+  https://www.wps2office.com/ notes and https://file-extension.info/ entries for .et and .dps
+  (three independent descriptions; the converter test here confirms LibreOffice reads a .doc
+  renamed .wps as Writer).
+- VBA by edition and mobile macros: see `platforms.md` (several wps.cn answers plus one official article).
+
 ## DISPIMG cell pictures
 - https://www.hangge.com/blog/cache/detail_3956.html (Excel `#NAME?`, convert to floating picture)
 - https://www.shulou.com/a544869 (DISPIMG arguments)

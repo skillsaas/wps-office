@@ -1,6 +1,6 @@
 {
   "name": "wps-office",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Use when working with WPS Office (Kingsoft) files and automation: .wps/.et/.dps and WPS-saved Office files, DISPIMG cell pictures, macros (VBA and WPS JS), safe conversion, WPS JS macros, wpsjs add-ins, AirScript, WPS for Linux.",
   "entry": "SKILL.md",
   "skill_md_url": "https://raw.githubusercontent.com/skillsaas/wps-office/main/SKILL.md",

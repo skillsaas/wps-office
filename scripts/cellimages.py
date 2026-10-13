@@ -19,7 +19,7 @@ folder (refuses one that exists), only pictures whose bytes are PNG, JPEG, GIF,
 BMP, WebP, TIFF, EMF or WMF, under generated names sheet<N>_<CELL>_<k>.<ext>
 (never a name from the file), files 0600 on POSIX, built in a temporary folder and
 renamed into place only when all writes succeeded. Pictures shared by several
-cells are written once per cell. Standard library only, Python 3.9+.
+cells are written once, with a cells list per saved file; --max-total caps all bytes written. Standard library only, Python 3.9+.
 
 Exit codes:
   0 ok        listed, or every mapped picture saved
@@ -37,6 +37,7 @@ import os
 import posixpath
 import re
 import shutil
+import struct
 import sys
 import tempfile
 
@@ -59,6 +60,43 @@ def image_ext(b):
     if len(b) > 44 and b[:4] == b"\x01\x00\x00\x00" and b[40:44] == b" EMF":
         return "emf"
     return None
+
+
+def image_info(b):
+    """Type and, where cheap, dimensions; None if the header is not a valid picture.
+
+    Checks more than the magic: PNG must start with an IHDR chunk, BMP needs a
+    known DIB header size, JPEG needs a marker after SOI. Also notes EXIF GPS.
+    """
+    t = image_ext(b)
+    if not t:
+        return None
+    info = {"type": t}
+    try:
+        if t == "png":
+            if b[12:16] != b"IHDR":
+                return None
+            info["width"], info["height"] = struct.unpack(">II", b[16:24])
+        elif t == "bmp":
+            if len(b) < 26 or struct.unpack("<I", b[14:18])[0] not in (12, 40, 52, 56, 64, 108, 124):
+                return None
+            info["width"], info["height"] = struct.unpack("<ii", b[18:26])
+            info["height"] = abs(info["height"])
+        elif t == "gif":
+            info["width"], info["height"] = struct.unpack("<HH", b[6:10])
+        elif t == "jpg":
+            if b[3:4] not in (b"\xe0", b"\xe1", b"\xdb", b"\xc0", b"\xc2", b"\xc4", b"\xee", b"\xed", b"\xfe"):
+                return None
+            m = re.search(b"\xff[\xc0\xc1\xc2]..\x08(..)(..)", b, re.S)
+            if m:
+                info["height"], info["width"] = struct.unpack(">H", m.group(1))[0], struct.unpack(">H", m.group(2))[0]
+            if b"Exif\x00\x00" in b[:65536] and (b"\x88\x25" in b[:65536] or b"\x25\x88" in b[:65536]):
+                info["gps"] = True
+    except struct.error:
+        return None
+    if "width" in info:
+        info["pixels"] = info["width"] * info["height"]
+    return info
 
 
 def resolve(base_dir, target):
@@ -140,13 +178,14 @@ def main(argv=None):
     ap.add_argument("--max-bytes", type=int, default=100 * 1024 * 1024)
     ap.add_argument("--max-file", type=int, default=25 * 1024 * 1024)
     ap.add_argument("--max-count", type=int, default=5000)
+    ap.add_argument("--max-total", type=int, default=512 * 1024 * 1024, help="cap on all picture bytes written")
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--version", action="version", version="cellimages.py " + wpslib.VERSION)
     try:
         a = ap.parse_args(argv)
     except SystemExit as e:
         return 2 if e.code else 0
-    r = {"ok": True, "status": "ok", "error": None, "tool": "cellimages.py", "version": wpslib.VERSION,
+    r = {"ok": True, "status": "ok", "error": None, "tool": "cellimages.py", "version": wpslib.VERSION, "schema_version": wpslib.SCHEMA_VERSION,
          "cells": [], "missing": [], "saved": [], "skipped": [], "output_dir": None}
     code = 0
     tmp = None
@@ -178,7 +217,8 @@ def main(argv=None):
             parent = os.path.dirname(out)
             if not os.path.isdir(parent):
                 raise FormatError("parent folder does not exist: %s" % clean(parent, 160))
-            plan = []
+            # one entry per distinct picture part; cells that share it are listed on it
+            plan, by_media, total = [], {}, 0
             for c in cells:
                 if not c["media"]:
                     continue
@@ -186,34 +226,71 @@ def main(argv=None):
                 if not real:
                     r["skipped"].append({"cell": c["cell"], "reason": "picture part missing"})
                     continue
-                if zf.getinfo(real).file_size > a.max_file:
+                if real in by_media:
+                    by_media[real]["cells"].append("%s!%s" % (c["sheet"], c["cell"]))
+                    continue
+                size = zf.getinfo(real).file_size
+                if size > a.max_file:
                     r["skipped"].append({"cell": c["cell"], "reason": "over --max-file"})
                     continue
-                b = wpslib.read_member(zf, real, a.max_file)
-                ext = image_ext(b)
-                if not ext:
-                    r["skipped"].append({"cell": c["cell"], "reason": "bytes are not a known picture type"})
+                try:
+                    with zf.open(real) as fh:
+                        head = fh.read(64 * 1024)
+                except wpslib.ZIP_ERRORS as exc:
+                    raise FormatError("cannot read %s: %s" % (clean(real, 80), type(exc).__name__))
+                info = image_info(head[:64 * 1024])
+                if not info:
+                    r["skipped"].append({"cell": c["cell"], "reason": "bytes are not a valid picture header"})
                     continue
+                total += size
+                if total > a.max_total:
+                    raise Refusal("pictures add up to more than --max-total %d bytes" % a.max_total)
                 cell = re.sub(r"[^A-Z0-9]", "", str(c["cell"]).upper())[:12] or "X"
-                base = "sheet%d_%s" % (c["sheet_index"], cell)
-                k = 1
-                while any(p[0] == "%s_%d.%s" % (base, k, ext) for p in plan):
-                    k += 1
-                plan.append(("%s_%d.%s" % (base, k, ext), b, c))
+                entry = {"file": "sheet%d_%s.%s" % (c["sheet_index"], cell, info["type"]), "part": real,
+                         "size": size, "info": info, "cells": ["%s!%s" % (c["sheet"], c["cell"])]}
+                k = 2
+                while any(p["file"] == entry["file"] for p in plan):
+                    entry["file"] = "sheet%d_%s_%d.%s" % (c["sheet_index"], cell, k, info["type"]); k += 1
+                by_media[real] = entry
+                plan.append(entry)
             if r["skipped"]:
                 code = 1
+            notes = []
+            for e in plan:
+                if e["info"].get("gps"):
+                    notes.append("%s has EXIF GPS location data" % e["file"])
+                if e["info"].get("pixels", 0) > 100_000_000:
+                    notes.append("%s declares %sx%s pixels (decompression-bomb size; do not open it)" % (e["file"], e["info"].get("width"), e["info"].get("height")))
+            r["notes"] = notes
             if a.dry_run:
-                r["would_save"] = [p[0] for p in plan]
+                r["would_save"] = [p["file"] for p in plan]
+                r["would_write_bytes"] = total
             else:
                 tmp = tempfile.mkdtemp(prefix=".cellimages-", dir=parent)
-                for name, b, c in plan:
+                for e in plan:
                     dl.check()
-                    p = os.path.join(tmp, name)
-                    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    with os.fdopen(fd, "wb") as fh:
-                        fh.write(b)
-                    r["saved"].append({"file": name, "sheet": c["sheet"], "cell": c["cell"], "bytes": len(b)})
-                os.rename(tmp, out)
+                    p = os.path.join(tmp, e["file"])
+                    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                    written = 0
+                    with os.fdopen(fd, "wb") as fh, zf.open(e["part"]) as src:
+                        while True:
+                            chunk = src.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            written += len(chunk)
+                            if written > a.max_file:
+                                raise Refusal("picture grew past --max-file while reading: %s" % e["part"])
+                            fh.write(chunk)
+                    item = {"file": e["file"], "cells": e["cells"], "shared_by": len(e["cells"]), "bytes": written}
+                    item.update({k: v for k, v in e["info"].items() if k in ("type", "width", "height", "gps")})
+                    r["saved"].append(item)
+                try:
+                    os.mkdir(out, 0o700)
+                except FileExistsError:
+                    raise Refusal("output folder appeared while extracting: %s" % clean(out, 160))
+                for item in r["saved"]:
+                    os.rename(os.path.join(tmp, item["file"]), os.path.join(out, item["file"]))
+                os.rmdir(tmp)
                 tmp = None
                 r["output_dir"] = out
         r["status"] = "ok" if code == 0 else "findings"
@@ -223,6 +300,10 @@ def main(argv=None):
         r.update(ok=False, status="error", error=str(exc)); code = 2
     except OSError as exc:
         r.update(ok=False, status="error", error="write failed: %s" % exc.strerror); code = 2
+    except MemoryError:
+        r.update(ok=False, status="refused", error="resource limit: MemoryError"); code = 3
+    except Exception as exc:  # noqa: BLE001  any bug still yields JSON and exit 2
+        r.update(ok=False, status="error", error="internal error: %s: %s" % (type(exc).__name__, clean(str(exc), 160))); code = 2
     finally:
         if tmp and os.path.isdir(tmp):
             shutil.rmtree(tmp, ignore_errors=True)
@@ -237,7 +318,7 @@ def main(argv=None):
             for c in r["cells"]:
                 print("  %s!%s -> %s" % (c["sheet"], c["cell"], c["media"] or "MISSING"))
             for s in r["saved"]:
-                print("saved %s" % s["file"])
+                print("saved %s (cells %s)" % (s["file"], ", ".join(s["cells"])))
             for s in r["skipped"]:
                 print("skipped %s: %s" % (s["cell"], s["reason"]))
     return code
