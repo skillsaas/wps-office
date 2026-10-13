@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased: 0.1.4 backlog (round-4 reviews)
+- Tariq N8 (medium): consent is echo text; bind a one-time token to the input SHA-256, risk set and expiry; keep `--consent` as the quote for the log.
+- Tariq N9: `install_skill.py --replace` aside name collides within the same second.
+- Tariq N10: combining marks in a scheme (`m` + U+0301 + `s-msdt:`) evade the high list; NFKD and drop Mn in the scheme token.
+- Tariq N11: `--consent-log` follows symlinks; open with O_NOFOLLOW.
+- Hamza: an incomplete PPT record walk should mark the report incomplete instead of a byte-scan count at exit 0.
+- Hamza: write the consent log after conversion and describe `--consent` as an audit record, not verification.
+- Hamza: show where `--replace` moved the old copy; PEP 8 blank lines; decide on a `skills/wps-office/SKILL.md` npm layout.
+
 ## 0.1.3 (2026-10-13)
 Round-3 review fixes (12 reviews, mean 8.92).
 - Links (Tariq N5): Cf characters are removed before hyphen look-alikes are mapped, so a soft
