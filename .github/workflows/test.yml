@@ -22,6 +22,9 @@ jobs:
       - name: LibreOffice and bubblewrap (Linux only)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc libreoffice-impress bubblewrap
+      - name: Allow unprivileged user namespaces for bwrap (Ubuntu 24.04 AppArmor default blocks them)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: python tests/smoke_test.py
       - name: Package file list
         if: runner.os == 'Linux' && matrix.python == '3.13'
