@@ -1,0 +1,3 @@
+# No runtime dependencies: standard library only (Python 3.9+).
+# Optional for tests: olefile (cross-read check).
+# convert_wps.py needs LibreOffice and, on Linux, bubblewrap (system packages, not pip).

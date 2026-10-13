@@ -1,0 +1,19 @@
+{
+  "name": "wps-office",
+  "version": "0.1.0",
+  "description": "Use when working with WPS Office (Kingsoft) files and automation: .wps/.et/.dps and WPS-saved Office files, DISPIMG cell pictures, macros (VBA and WPS JS), safe conversion, WPS JS macros, wpsjs add-ins, AirScript, WPS for Linux.",
+  "entry": "SKILL.md",
+  "skill_md_url": "https://raw.githubusercontent.com/skillsaas/wps-office/main/SKILL.md",
+  "repository": "https://github.com/skillsaas/wps-office",
+  "license": "MIT",
+  "requires": {"python": ">=3.9", "pip": [], "pip_optional_for_tests": ["olefile"], "system_optional": ["libreoffice", "bubblewrap (Linux)"]},
+  "published": {"npm": false, "github": false},
+  "verification": {
+    "tested_on_box": ["scripts/*.py via tests/smoke_test.py (Linux, Python 3.13.5)", "LibreOffice 25.2.3.2 conversion in bwrap", "network canary: no request from the sandbox, requests without it", "fixtures cross-read by olefile 0.47"],
+    "documented_not_executed": ["references/automation.md (open.wps.cn, airsheet.wps.cn)", "references/linux.md", "references/cloud.md"]
+  },
+  "not_tested": ["WPS Office (any version)", "files saved by WPS", "macOS", "Windows"],
+  "safety": {"network_access": false, "executes_document_code": false, "renders_documents": "convert_wps.py only, inside bwrap", "writes": "new output paths only"},
+  "selfcheck": "python tests/smoke_test.py",
+  "scripts": {"inspect_wps": "scripts/inspect_wps.py", "cellimages": "scripts/cellimages.py", "convert_wps": "scripts/convert_wps.py"}
+}
