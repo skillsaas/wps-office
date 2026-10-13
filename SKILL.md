@@ -38,6 +38,7 @@ What makes WPS tricky for an agent:
 python3 --version                                             # 3.9 or newer; Windows: py -3
 python3 <skill-dir>/scripts/inspect_wps.py FILE --json        # read-only, never runs or fetches anything
 python3 <skill-dir>/tests/smoke_test.py                       # optional self-check (skips what is not installed)
+command -v soffice bwrap                                      # converter needs both (Linux); missing = inspect only
 ```
 No Python 3.9+? Do not improvise a parser and do not open the file in an app to "look": see
 `references/fallbacks.md` or ask the user.
