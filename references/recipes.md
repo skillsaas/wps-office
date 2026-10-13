@@ -89,3 +89,37 @@ python3 <skill-dir>/scripts/convert_wps.py budget.et /tmp/out/budget.xlsx --to x
 ```
 Tell the user: converted with LibreOffice in a sandbox, not with WPS; open both and compare a
 few totals. In the smoke test the same route kept the cell values of a test sheet.
+
+## 5. Bad case: "Convert this WPS spreadsheet" and it carries embedded objects
+Input: the real WPS-saved `tests/samples/testWPSAttachment.xls` (Apache Tika corpus).
+```bash
+python3 <skill-dir>/scripts/convert_wps.py budget.xls /tmp/out/budget.xlsx --to xlsx --json
+```
+```json
+{"ok": false, "status": "refused", "exit_reasons": ["input-risks"], "exit_code": 3,
+ "error": "input has detected risks (ole-package); convert only if the user accepts that, with --allow-risky-input"}
+```
+Tell the user: the file embeds other files as OLE packages (they can carry programs); nothing
+was converted. Ask: "Convert anyway in the sandbox? The embedded files are not opened." Only
+after a clear yes:
+```bash
+python3 <skill-dir>/scripts/convert_wps.py budget.xls /tmp/out/budget.xlsx --to xlsx --allow-risky-input --json
+```
+```json
+{"status": "findings", "exit_reasons": ["input-risks"], "exit_code": 1,
+ "engine_version": "LibreOffice 25.2.3.2 520(Build:2)", "memory_limit_mb": 4096,
+ "output_check": {"family": "spreadsheet", "overall_risk": "none", "detected_risks": [], "complete": true, "macros_left": []}}
+```
+Tell the user: converted with LibreOffice in the sandbox. The output check found no embedded
+objects, so they were most likely dropped in conversion: if the user needs them, keep the
+original. Exit 1 here is expected (the input had risks), not a failure.
+
+## 6. Bad case: a damaged or hostile package
+```bash
+python3 <skill-dir>/scripts/inspect_wps.py big.xlsx --json
+```
+```json
+{"ok": false, "status": "refused", "error": "ZIP member compression ratio over 200: xl/workbook.xml", "exit_code": 3}
+```
+Tell the user: the file looks like a ZIP bomb (a small file that expands enormously); it was not
+unpacked. Do not raise limits to "try again"; ask where the file came from.

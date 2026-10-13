@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.2 (2026-10-13)
+Round-2 review fixes (12 reviews, mean 8.825).
+- Links (Tariq N1): decode until stable (max 8), NFKC, hyphen look-alikes (soft hyphen) mapped
+  to `-`, Unicode Cf and whitespace or controls inside the scheme removed; a scheme matching a
+  dangerous one without hyphens is high; relative targets ending in an executable or script
+  extension are high. The policy is written out in `security.md`.
+- Writer DDE (N2): orphan `instrText` without `fldChar` counts again, plus a raw fallback over
+  all `instrText` of a part.
+- DOCTYPE (N3): complete comments and CDATA are ignored before the check (unterminated ones are not).
+- Converter (N4): `--max-memory` and the file-size limit are clamped to the process hard limit
+  (`memory_limit_mb`, a note when clamped); `--dry-run` prints a plan (`would_run`, `blockers`,
+  `expected_losses`) and writes nothing; `engine_version` records the LibreOffice version.
+- `ZIP_ERRORS` no longer contains OSError or KeyError (Hamza); resource-limit refusals documented as exit 3.
+- Real files: six WPS-saved files from the Apache Tika corpus (Apache-2.0) in `tests/samples/`
+  with licence, notice and hashes. They found a bug, now fixed: the OLE2 family was read from
+  embedded storages (a `.xls` embedding a `.doc` was called Writer). Embedded objects in
+  `.ppt/.dps` are now counted from ExOleObjStg records. No native `.wps/.et/.dps` was found.
+- JSON: `category` on every risk, `coverage_gaps` slugs, canonical examples, migration note.
+- Docs: Chinese vs international table and evidence labels (`platforms.md`); "sourced, not
+  verified" labels in SKILL.md; agent action per exit code and the explicit consent flow for
+  `--allow-risky-input`; converter constraints in the router row; sandbox boundary, canary
+  reproduction, extracted files untrusted (`security.md`); one-line loss summary and LibreOffice
+  version table (`conversion.md`); cellimages recovery limits; evidence labels in
+  `automation.md`; two bad-case recipes with real output; README preflight; fuzz documented.
+- Tests: 55 (was 48), and the whole suite passes under `ulimit -v 4000000`.
+
 ## 0.1.1 (2026-10-13)
 Round-1 review fixes (12 reviews; see feedback SYNTHESIS).
 - JSON: `risks` renamed `detected_risks` ("not a safety verdict"); new `schema_version`,

@@ -77,6 +77,26 @@ NOT_CHECKED_ALWAYS = [
 ]
 
 
+CATEGORY = {
+    "execution": ("macros", "renamed-macro-part", "macros-under-plain-extension", "ole-package", "activex",
+                  "dde-field", "dde-formula", "call-formula", "dde-link", "ole-link", "odf-event-script",
+                  "rtf-object", "pdf-active-content", "equation-editor-object", "unknown-binary-or-script-part"),
+    "fetch": ("external-", "dangerous-link-scheme", "unusual-link-scheme", "web-formula", "hyperlink-formula"),
+    "deception": ("extension-mismatch", "text-shows-other-host", "hidden-characters-in-metadata", "very-hidden-sheet"),
+    "privacy": ("formula-like-text",),
+    "coverage": ("encrypted", "damaged-structure", "embedded-objects"),
+    "compatibility": ("wps-cell-images",),
+}
+
+
+def category(kind):
+    """What kind of concern a risk is: execution, fetch, deception, privacy, coverage, compatibility."""
+    for cat, kinds in CATEGORY.items():
+        if any(kind == k or (k.endswith("-") and kind.startswith(k)) for k in kinds):
+            return cat
+    return "other"
+
+
 class Report:
     def __init__(self, path, show_targets):
         self.show = show_targets
@@ -89,11 +109,12 @@ class Report:
                   "embedded_objects": [], "external_links": [], "hyperlinks": 0,
                   "wps_features": {}, "hidden": {}, "review": {},
                   "detected_risks": [], "overall_risk": "none", "complete": True,
-                  "coverage_complete": True, "incomplete": [], "not_checked": list(NOT_CHECKED_ALWAYS),
+                  "coverage_complete": True, "coverage_gaps": [], "incomplete": [], "not_checked": list(NOT_CHECKED_ALWAYS),
                   "exit_reasons": []}
 
     def risk(self, level, kind, detail):
-        self.r["detected_risks"].append({"risk": level, "kind": kind, "detail": clean(detail, 300)})
+        self.r["detected_risks"].append({"risk": level, "kind": kind, "category": category(kind),
+                                         "detail": clean(detail, 300)})
 
     def has(self, kind):
         return any(x["kind"] == kind for x in self.r["detected_risks"])
@@ -103,8 +124,10 @@ class Report:
             self.r["incomplete"].append(why)
         self.r["complete"] = False
 
-    def gap(self, what):
+    def gap(self, what, slug):
         self.r["not_checked"].append(what)
+        if slug not in self.r["coverage_gaps"]:
+            self.r["coverage_gaps"].append(slug)
         self.r["coverage_complete"] = False
 
     def meta(self, key, value):
@@ -147,7 +170,7 @@ DOCSUM_PIDS = {14: "manager", 15: "company"}
 
 def inspect_cfb(rep, data, dl, cap):
     cfb = wpslib.Cfb(data, dl)
-    names = {e["path"].split("/")[-1].lower() for e in cfb.entries}
+    names = {e["path"].lower() for e in cfb.entries if "/" not in e["path"]}   # root level decides the family
     paths = [e["path"] for e in cfb.entries]
     r = rep.r
     if "encryptioninfo" in names and "encryptedpackage" in names:
@@ -156,7 +179,7 @@ def inspect_cfb(rep, data, dl, cap):
         rep.incomplete("encrypted")
     elif "worddocument" in names:
         r["family"], r["format"] = "writer", "Word 97-2003 binary layout (.doc; WPS Writer .wps/.wpt use the same layout)"
-        fib = cfb.read(cfb.find("WordDocument")[0], 64)
+        fib = cfb.read([e for e in cfb.entries if e["path"].lower() == "worddocument"][0], 64)
         if len(fib) >= 12:
             ident, flags = int.from_bytes(fib[0:2], "little"), int.from_bytes(fib[10:12], "little")
             if ident != 0xA5EC:
@@ -166,7 +189,7 @@ def inspect_cfb(rep, data, dl, cap):
                 rep.incomplete("encrypted")
     elif "workbook" in names or "book" in names:
         r["family"], r["format"] = "spreadsheet", "Excel 97-2003 BIFF layout (.xls; WPS Spreadsheets .et/.ett use the same layout)"
-        ent = (cfb.find("Workbook") or cfb.find("Book"))[0]
+        ent = [e for e in cfb.entries if e["path"].lower() in ("workbook", "book")][0]
         wb = cfb.read(ent, 256 * 1024)
         pos = 0
         while pos + 4 <= len(wb):
@@ -183,6 +206,13 @@ def inspect_cfb(rep, data, dl, cap):
         if "encryptedsummary" in names:
             rep.risk("medium", "encrypted", "presentation is password-encrypted (EncryptedSummary stream)")
             rep.incomplete("encrypted")
+        # Embedded objects in .ppt/.dps live inside the PowerPoint Document stream as
+        # ExOleObjStg records (type 0x1011), not as storages: count record headers.
+        pd = cfb.read([e for e in cfb.entries if e["path"].lower() == "powerpoint document"][0], min(cap, 64 * 1024 * 1024))
+        n_obj = len(re.findall(rb"[\x00\x10]\x00\x11\x10", pd))
+        if n_obj:
+            r["embedded_objects"].append({"kind": "ppt-exoleobjstg", "path": "PowerPoint Document (%d record header(s))" % n_obj})
+            rep.risk("medium", "embedded-objects", "PowerPoint stream has %d ExOleObjStg record header(s): embedded OLE objects (byte scan; contents not parsed, may include OLE packages)" % n_obj)
     elif "mn0" in names:
         r["family"], r["format"] = "works", "Microsoft Works word processor (.wps, MN0 stream); not a Kingsoft WPS file"
     else:
@@ -220,15 +250,15 @@ def inspect_cfb(rep, data, dl, cap):
             rep.risk("high", "ole-package", "OLE Package object (Ole10Native) can carry any file, including programs: %s" % p)
         elif p.lower().startswith("objectpool/") and p.count("/") == 1 or re.match(r"^MBD[0-9A-F]+$", last):
             r["embedded_objects"].append({"kind": "ole-object", "path": clean(p, 120)})
-    if r["embedded_objects"] and not any(x["risk"] == "high" and x["kind"] == "ole-package" for x in r["detected_risks"]):
+    if r["embedded_objects"] and not rep.has("embedded-objects") and not any(x["risk"] == "high" and x["kind"] == "ole-package" for x in r["detected_risks"]):
         rep.risk("medium", "embedded-objects", "%d embedded OLE object(s)" % len(r["embedded_objects"]))
     if cfb.issues:
         for i in cfb.issues:
             rep.incomplete("compound file structure: %s" % i)
         if "sector-past-end-of-file" in cfb.issues:
             rep.risk("low", "damaged-structure", "sector chain points past the end of the file (seen in some WPS-saved .doc files; other readers may refuse it)")
-    rep.gap("binary formats: text, comments, tracked changes, hidden content, links and DDE inside the binary streams are not parsed")
-    rep.gap("binary formats: where WPS stores JS (JSA) macros inside .wps/.et/.dps is not documented; only VBA storages are detected")
+    rep.gap("binary formats: text, comments, tracked changes, hidden content, links and DDE inside the binary streams are not parsed", "binary-streams-not-parsed")
+    rep.gap("binary formats: where WPS stores JS (JSA) macros inside .wps/.et/.dps is not documented; only VBA storages are detected", "jsa-in-binary-unknown")
 
 
 # ------------------------------------------------------------------ OOXML files
@@ -348,7 +378,7 @@ def inspect_zip(rep, data, dl, cap):
                 rep.risk("high", "activex", "ActiveX controls present")
         elif ln.startswith(("customui/", "customui14")) or base in ("customui.xml", "customui14.xml"):
             r["active_content"].append({"kind": "ribbon-customization", "where": clean(n, 120)})
-        elif "/embeddings/" in ln:
+        elif "/embeddings/" in ln and not ln.endswith("/"):
             kind = "ole-object" if base.endswith(".bin") else "embedded-file"
             r["embedded_objects"].append({"kind": kind, "path": clean(n, 120)})
             if base.endswith(".bin"):
@@ -438,6 +468,8 @@ def writer_checks(rep, names, lower, xml, rel_by_id):
                     fields.append("".join(stack.pop()[0]))
             elif t == W + "instrText" and stack and stack[-1][1]:
                 stack[-1][0].append(el.text or "")
+            elif t == W + "instrText" and not stack:
+                fields.append(el.text or "")       # orphan instrText (no fldChar) still counts
             elif t == W + "fldSimple":
                 fields.append(el.get(W + "instr") or "")
             elif t in (W + "ins", W + "moveTo"):
@@ -456,6 +488,10 @@ def writer_checks(rep, names, lower, xml, rel_by_id):
                             not host.lower().endswith("." + m.group(1)):
                         shown_other += 1
         fields.extend("".join(st[0]) for st in stack)  # unterminated fields still count
+        # raw fallback: every instrText of the part joined, whatever the field structure
+        allinstr = "".join((x.text or "") for x in root.iter(W + "instrText"))
+        if re.search(r"(^|\s)DDE(AUTO)?\s", allinstr, re.I):
+            fields.append("DDE " + allinstr[:80])
     for f in fields:
         fs = " ".join(f.split())
         if re.match(r"^\s*DDE(AUTO)?\b", fs, re.I):
@@ -573,7 +609,7 @@ def inspect_odf(rep, zf, names, lower, get):
     if "meta-inf/manifest.xml" in lower and b"manifest:encryption-data" in get(lower["meta-inf/manifest.xml"]):
         rep.risk("medium", "encrypted", "OpenDocument parts are encrypted")
         rep.incomplete("encrypted")
-    rep.gap("OpenDocument: metadata, links, comments and hidden content are not parsed; only macros and event scripts are checked")
+    rep.gap("OpenDocument: metadata, links, comments and hidden content are not parsed; only macros and event scripts are checked", "odf-content-not-parsed")
 
 
 def share_blockers(r):
@@ -638,7 +674,7 @@ def inspect_rtf(rep, data):
             rep.risk("high", "dde-field", "RTF DDE/DDEAUTO field")
             r["active_content"].append({"kind": "dde-field", "where": "RTF \\fldinst"})
             break
-    rep.gap("RTF: only \\objdata, \\*\\template and DDE fields are checked")
+    rep.gap("RTF: only \\objdata, \\*\\template and DDE fields are checked", "rtf-partial")
 
 
 def main(argv=None):
@@ -689,7 +725,7 @@ def main(argv=None):
                 rep.risk(level, "pdf-active-content",
                          "PDF names %s (byte scan; compressed object streams are not searched; "
                          "OpenAction alone usually only sets the first view)" % ", ".join(hits))
-            rep.gap("PDF: only an uncompressed byte scan for action names; object streams are not decoded")
+            rep.gap("PDF: only an uncompressed byte scan for action names; object streams are not decoded", "pdf-object-streams")
         elif kind == "works-legacy":
             r["family"], r["format"] = "works", "Microsoft Works 1-3 word processor (non-OLE); not a Kingsoft WPS file"
         elif kind == "rtf":
@@ -702,7 +738,7 @@ def main(argv=None):
             if not ok:
                 rep.risk("medium", "extension-mismatch", "content is %s but the name ends in %s" % (r["format"], ext))
         if r["family"] == "works":
-            rep.gap("Microsoft Works file: WPS Office does not claim to open it; LibreOffice reads it through libwps")
+            rep.gap("Microsoft Works file: WPS Office does not claim to open it; LibreOffice reads it through libwps", "works-not-parsed")
         top = max([RANK[x["risk"]] for x in r["detected_risks"]] + [0])
         r["overall_risk"] = [k for k, v in RANK.items() if v == top][0]
         if a.share_check:

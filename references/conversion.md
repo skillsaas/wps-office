@@ -2,6 +2,16 @@
 
 Load this before converting, or when a conversion looks wrong.
 
+**In one line:** text and simple tables usually survive; fonts, page breaks, charts, WPS-only
+layout and DISPIMG pictures may not; JS macros never do; the result is LibreOffice's rendering.
+Check it (fidelity checklist at the end). Preview the plan first with `--dry-run`.
+
+## LibreOffice versions
+| Version | Status |
+| :--- | :--- |
+| 25.2.3.2 | Tested here (Debian package): .doc renamed .wps to .docx, .xls renamed .et to .xlsx, real WPS-saved .xls (Tika sample) to .xlsx, canary |
+| Others | Not tested. The converter records the version it ran (`engine_version`) and does not refuse other versions |
+
 ## Which route
 | Situation | Route | Fidelity |
 | :--- | :--- | :--- |

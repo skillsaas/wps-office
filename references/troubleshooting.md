@@ -24,3 +24,5 @@
 | `refused: input has detected risks` (convert) | `input_risks` | Ask the user; if they accept, rerun with `--allow-risky-input` (exit 1 is expected) |
 | `refused: pictures add up to more than --max-total` | `cells` count and part sizes | Raise `--max-total` only after the user agrees, or extract on a machine with space |
 | Converter `refused` or LibreOffice crashes under the memory cap | `--max-memory` | Large decks may need `--max-memory 6144`; do not remove the cap |
+| Converter `notes` says --max-memory was clamped | The process runs under `ulimit -v` | Expected: LibreOffice gets the lower limit. If it then fails, raise the ulimit, not the flag |
+| Many `dangerous-link-scheme` for `ms-word:` links | SharePoint or Office links | Expected: every `ms-*` handler is high by policy (`security.md`); explain, do not call it malicious |

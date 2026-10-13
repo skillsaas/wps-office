@@ -4,6 +4,22 @@ Load this when the question is "can my WPS run this macro?", or the user is on a
 or the international (wps.com) build. Nothing here was tested on a device; each row names its
 source and how strong it is. Read 2026-10-13.
 
+Evidence labels used below: **official** (wps.cn or wps.com article or staff answer),
+**community** (forum user), **unverified** (no source found). Nothing in this file is
+**tested here**: WPS was not installed.
+
+## Chinese (wps.cn) vs international (wps.com) builds
+| Topic | Chinese build (wps.cn, 金山办公) | International build (wps.com) | Evidence |
+| :--- | :--- | :--- | :--- |
+| Account | WPS account (Kingsoft), phone or WeChat sign-in common | WPS account at wps.com; Linux 12.1.2.29182 added international sign-in | official (wps.com Linux update log); Chinese sign-in methods unverified |
+| Cloud | KDocs (金山文档, kdocs.cn) and WPS cloud | WPS Cloud; KDocs availability unverified | official (wps.com update log); rest unverified |
+| AirScript | On KDocs documents; script-token API at airsheet.wps.cn / kdocs.cn | Not found in wps.com docs | official (airsheet.wps.cn); international unverified |
+| VBA | Paid editions plus the VBA component (table below) | Unverified | official (wps.cn) / unverified |
+| JS macros (JSA) | Yes (macro editor) | Unverified in docs; same client family | official (open.wps.cn) / unverified |
+| Fonts | Chinese fonts expected by Chinese documents | Same documents need the same fonts; on Linux install them yourself (Arch `ttf-wps-fonts`) | community (ArchWiki) |
+| Linux launchers | `wps`, `et`, `wpp`, `wpspdf` (linux.wps.cn builds) | Same names in the wps.com `.deb`/`.rpm` | community (ArchWiki); not checked per build |
+| Downloads | wps.cn, linux.wps.cn | wps.com | official |
+
 ## VBA by edition (WPS for Windows, Chinese builds)
 | Edition | VBA | Source |
 | :--- | :--- | :--- |

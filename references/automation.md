@@ -8,7 +8,10 @@ version number; they describe the current WPS 365 / WPS 2023-era client. `wpsjs`
 that day. The AirScript endpoint below is the `v3` path on that date. Members, endpoints and
 headers can change between WPS releases: if a call fails, check the page again before guessing.
 
-## Minimal hello examples (documented patterns, not run here)
+Evidence label for every example in this file: **documented** (matches the cited vendor page)
+and **not run** (no WPS here). None is syntax-checked or integration-tested.
+
+## Minimal hello examples (documented, not run)
 JS macro, Spreadsheets:
 ```javascript
 function Hello() {

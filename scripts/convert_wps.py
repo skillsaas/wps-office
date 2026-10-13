@@ -72,6 +72,29 @@ PROFILE_XCU = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+class _DryRun(Exception):
+    pass
+
+
+def _res(name):
+    try:
+        import resource
+        return getattr(resource, name)
+    except ImportError:
+        return None
+
+
+EXPECTED_LOSS = {
+    "writer": ["fonts missing on this machine are substituted, so line and page breaks can move",
+               "WPS-specific layout and fields may render differently"],
+    "spreadsheet": ["DISPIMG cell pictures become #NAME? or are dropped: save them first with cellimages.py",
+                    "charts can restyle; formulas WPS has and LibreOffice lacks become errors"],
+    "presentation": ["animations, transitions and embedded media can change", "fonts are substituted"],
+    "works": ["Microsoft Works import is LibreOffice's libwps: basic text and formatting only"],
+    "all": ["JS (JSA) macros are not kept", "the result is LibreOffice's rendering, not WPS's"],
+}
+
+
 def find_soffice(given):
     if given:
         return given if os.path.isfile(given) else None
@@ -101,6 +124,23 @@ def bwrap_cmd(bwrap, work, soffice_args):
             "--setenv", "HOME", "/work/home", "--setenv", "PATH", "/usr/bin:/bin",
             "--setenv", "TMPDIR", "/tmp", "--setenv", "LANG", "C.UTF-8", "--chdir", "/work"]
     return cmd + soffice_args
+
+
+def clamp_limit(kind, want):
+    """The limit a child can really get: never above the current hard limit.
+
+    A process may lower its limits but not raise the hard one, so asking for
+    more than the parent's `ulimit -v` would make setrlimit fail in the child.
+    Returns (effective, clamped).
+    """
+    try:
+        import resource
+    except ImportError:
+        return want, False
+    _soft, hard = resource.getrlimit(kind)
+    if hard != resource.RLIM_INFINITY and hard < want:
+        return hard, True
+    return want, False
 
 
 def _limits(mem, fsize):
@@ -179,6 +219,7 @@ def main(argv=None):
     ap.add_argument("--soffice")
     ap.add_argument("--force", action="store_true", help="replace OUT; keeps no backup")
     ap.add_argument("--max-memory", type=int, default=4096, help="address-space cap for LibreOffice, MB")
+    ap.add_argument("--dry-run", action="store_true", help="inspect and print the plan; do not run LibreOffice or write anything")
     ap.add_argument("--allow-risky-input", action="store_true", help="convert even if the input has medium or high detected risks (still exit 1)")
     ap.add_argument("--version", action="version", version="convert_wps.py " + wpslib.VERSION)
     try:
@@ -222,14 +263,30 @@ def main(argv=None):
         if want and fam not in (want, "works", "opendocument") and not (fam == "works" and want == "writer"):
             raise FormatError("a %s file cannot become .%s" % (fam, a.to))
         soffice = find_soffice(a.soffice)
-        if not soffice:
-            raise FormatError("LibreOffice (soffice) not found. Install it: Debian/Ubuntu 'sudo apt install libreoffice-core bubblewrap', "
-                              "Fedora 'sudo dnf install libreoffice-core bubblewrap'; or see references/fallbacks.md")
         risky = [x["kind"] for x in pre["detected_risks"] if x["risk"] in ("medium", "high")]
+        if a.dry_run:
+            bw = shutil.which("bwrap") if sys.platform.startswith("linux") else None
+            blockers = []
+            if risky and not a.allow_risky_input:
+                blockers.append("input has detected risks (%s): needs the user's consent and --allow-risky-input" % ", ".join(sorted(set(risky))))
+            if not bw:
+                blockers.append("no bubblewrap sandbox on this system (Linux only)")
+            if not soffice:
+                blockers.append("LibreOffice not found")
+            r["plan"] = {"target": a.to, "libreoffice_filter": filt, "would_run": not blockers, "blockers": blockers,
+                         "sandbox_available": bool(bw), "libreoffice": soffice,
+                         "expected_losses": EXPECTED_LOSS.get(fam, []) + EXPECTED_LOSS["all"]}
+            if risky:
+                r["exit_reasons"].append("input-risks")
+            r["input_risks"] = pre["detected_risks"]
+            raise _DryRun()
         if risky:
             r["exit_reasons"].append("input-risks")
             if not a.allow_risky_input:
                 raise Refusal("input has detected risks (%s); convert only if the user accepts that, with --allow-risky-input" % ", ".join(sorted(set(risky))))
+        if not soffice:
+            raise FormatError("LibreOffice (soffice) not found. Install it: Debian/Ubuntu 'sudo apt install libreoffice-core bubblewrap', "
+                              "Fedora 'sudo dnf install libreoffice-core bubblewrap'; or see references/fallbacks.md")
         r["engine"] = "LibreOffice at %s" % soffice
         bwrap = shutil.which("bwrap") if sys.platform.startswith("linux") else None
         if not bwrap:
@@ -251,7 +308,14 @@ def main(argv=None):
             raise Refusal("LibreOffice is outside /usr and /opt and cannot run in the sandbox")
         cmd = bwrap_cmd(bwrap, work, args)
         env = {"PATH": "/usr/bin:/bin"}
-        rc, so, se = run(cmd, a.timeout, env, a.max_memory * 1024 * 1024, a.max_bytes * 4)
+        mem, mclamped = clamp_limit(_res("RLIMIT_AS"), a.max_memory * 1024 * 1024)
+        fsz, _fc = clamp_limit(_res("RLIMIT_FSIZE"), a.max_bytes * 4)
+        r["memory_limit_mb"] = mem // (1024 * 1024)
+        if mclamped:
+            r["notes"] = ["--max-memory %d MB is above this process's hard limit (ulimit -v); using %d MB" % (a.max_memory, r["memory_limit_mb"])]
+        vrc, vso, _vse = run(bwrap_cmd(bwrap, work, [soffice, "--version"]), 60, env, mem, fsz)
+        r["engine_version"] = clean(vso.strip(), 120) or None
+        rc, so, se = run(cmd, a.timeout, env, mem, fsz)
         res = single_output(os.path.join(work, "out"), a.max_bytes * 4, rc, se or so)
         tmp_out = out + ".partial-%d" % os.getpid()
         copy_nofollow(res, tmp_out)
@@ -270,6 +334,9 @@ def main(argv=None):
         code = 1 if r["exit_reasons"] else 0
         r["not_checked"] = ["layout, fonts, formulas and charts are LibreOffice's rendering, not WPS's: compare with the original",
                             "WPS-only features (DISPIMG cell pictures, WPS fonts, JS macros) may be dropped or changed"]
+        r["status"] = "ok" if code == 0 else "findings"
+    except _DryRun:
+        code = 1 if r["exit_reasons"] or not r["plan"]["would_run"] else 0
         r["status"] = "ok" if code == 0 else "findings"
     except Refusal as exc:
         r.update(ok=False, status="refused", error=str(exc)); code = 3

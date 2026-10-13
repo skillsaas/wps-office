@@ -122,7 +122,7 @@ def analyse(data, dl):
     zf = wpslib.open_zip(data)
     lower = {n.lower(): n for n in zf.namelist()}
     if "xl/workbook.xml" not in lower:
-        raise FormatError("not a spreadsheet package (no xl/workbook.xml)")
+        raise FormatError("not a spreadsheet package (no xl/workbook.xml); if inspect_wps.py reports a damaged ZIP, that is the cause")
     wb = wpslib.parse_xml(wpslib.read_member(zf, lower["xl/workbook.xml"]))
     wrels = rels_map(zf, lower, "xl/_rels/workbook.xml.rels")
     sheets = []

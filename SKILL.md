@@ -4,7 +4,7 @@ description: "Use when a user has a WPS Office (Kingsoft) file or task: .wps/.wp
 license: MIT
 compatibility: "Python 3.9+ standard library only. convert_wps.py also needs LibreOffice and, on Linux, bubblewrap (bwrap); without bwrap it refuses. Smoke tests run on Linux; the CI workflow covers Linux, macOS and Windows (not yet run: repo not pushed). WPS Office itself was not installed or run."
 metadata:
-  version: "0.1.1"
+  version: "0.1.2"
   updated: "2026-10-13"
   last-verified: "2026-10-13"
   risk: "medium"
@@ -24,12 +24,14 @@ only when its row says so.
 
 What makes WPS tricky for an agent:
 - **The extension lies.** A Kingsoft `.wps`, `.et` or `.dps` saved by WPS 2005 or later is
-  laid out like a Word `.doc`, Excel `.xls` or PowerPoint `.ppt` (OLE2 compound file). Some
+  laid out like a Word `.doc`, Excel `.xls` or PowerPoint `.ppt` (OLE2 compound file; sourced,
+  not verified on a native WPS file: see `references/sources.md`). Some
   `.et` files are ZIP packages like `.xlsx`. And `.wps` is also Microsoft Works' word processor
   format, which WPS does not make. Always identify by bytes (`inspect_wps.py`).
 - **Office cannot open the native formats**, and some WPS-only features do not survive in
   Microsoft Office: in-cell pictures become `#NAME?` (`DISPIMG`), JS macros do not run.
-- **WPS has two macro languages**: VBA and JS macros (JSA, a V8 runtime). Both are code.
+- **WPS has two macro languages**: VBA and JS macros (JSA, a V8 runtime per open.wps.cn;
+  sourced, not verified). Both are code.
 - **No documented headless converter in WPS.** Conversion here uses LibreOffice, so fidelity
   is LibreOffice's, not WPS's.
 
@@ -48,7 +50,7 @@ No Python 3.9+? Do not improvise a parser and do not open the file in an app to 
 | :--- | :--- | :--- | :--- |
 | What is this .wps/.et/.dps (or any Office file)? | `inspect_wps.py FILE --json` | Report `family`, `format`, `extension_matches`, `wps_markers`, `detected_risks` | `references/formats.md` |
 | Word/Excel/PowerPoint will not open a WPS file | `inspect_wps.py FILE --json` | Works file, encrypted, damaged, or a native format: convert or re-save | `references/compatibility.md` |
-| Convert to .docx/.xlsx/.pptx/.pdf | `inspect_wps.py FILE --json` | `convert_wps.py FILE NEW.docx --to docx` (asks nothing, writes a new file) | `references/conversion.md` |
+| Convert to .docx/.xlsx/.pptx/.pdf (Linux + LibreOffice + bwrap only; macOS/Windows: Linux VM or container) | `convert_wps.py FILE NEW.docx --to docx --dry-run --json` | Same command without `--dry-run` (writes one new file) | `references/conversion.md` |
 | Excel shows #NAME? / `=DISPIMG("ID_...",1)` | `cellimages.py FILE.xlsx --json` | `--extract NEW_DIR` to save the pictures; or re-save in WPS as floating pictures | `references/compatibility.md` |
 | Is it safe to open? Macros, links, objects | `inspect_wps.py FILE --json --fail-on-risk medium` | Explain each risk; never enable macros | `references/security.md` |
 | Clean before sending | `inspect_wps.py FILE --json --share-check` | List blockers; the user removes them in WPS (`references/security.md`), then check again | `references/security.md` |
@@ -61,18 +63,11 @@ No Python 3.9+? Do not improvise a parser and do not open the file in an app to 
 
 Worked examples with real output: `references/recipes.md`. Every JSON key: `references/json-output.md`.
 
-```json
-{"status": "ok", "container": "cfb", "family": "writer",
- "format": "Word 97-2003 binary layout (.doc; WPS Writer .wps/.wpt use the same layout)",
- "extension_matches": true, "wps_markers": ["KSOProductBuildVer", "WPS Office"],
- "overall_risk": "high", "complete": true, "coverage_complete": false,
- "assessment": "detected_risks lists what the checks found; it is not a safety verdict",
- "detected_risks": [{"risk": "high", "kind": "macros", "detail": "VBA project present: code that runs when macros are enabled"}],
- "exit_reasons": []}
-```
-`detected_risks` are static indicators from known storage places, not a verdict: an empty list
-means "nothing found by these checks", never "safe". `exit_reasons` says why exit 1 happened
-(`risk-threshold`, `share-blockers`, `incomplete`, `input-risks`, `output-risks`).
+Key JSON fields: `family`, `format`, `extension_matches`, `wps_markers`, `detected_risks`
+(`risk`, `kind`, `category`, `detail`), `complete`, `coverage_complete`, `coverage_gaps`,
+`exit_reasons`. `detected_risks` are static indicators from known storage places, not a
+verdict: an empty list means "nothing found by these checks", never "safe". Full examples:
+`references/json-output.md`.
 
 ## What this skill can and cannot do
 | Can | Cannot |
@@ -113,12 +108,26 @@ rules. No flag skips the sandbox.
 - Never call a report "safe": `detected_risks` and `overall_risk` are triage signals from the
   checks that ran, and `--share-check` is a privacy review, not a malware scan.
 
+## Agent action per outcome
+| Outcome | Do |
+| :--- | :--- |
+| Exit 0 | Proceed, subject to the other rules; still report `not_checked` and `coverage_gaps` |
+| Exit 1 | Read `exit_reasons`; explain each finding; get consent if the next step needs it (below) |
+| Exit 2 | Stop this operation; say what the file is and the next step |
+| Exit 3 | Do not retry by weakening a limit or the sandbox; explain the rule and the safe alternative |
+Say for a clean report: "No known risk was found by these static checks. This is not a malware
+scan; do not enable macros." Extracted pictures and converted files are untrusted too: never
+open, render, run or upload them automatically.
+
 ## Ask the user before
 - Converting with `--force` (replaces the output; no backup).
 - Uploading anything to WPS cloud or KDocs, or running an AirScript webhook (it runs code in their document).
 - Installing WPS, LibreOffice, bubblewrap or fonts.
-- Extracting pictures, or converting a file with medium or high detected risks (the converter
-  refuses those unless the user agrees and you pass `--allow-risky-input`; it still exits 1).
+- Extracting pictures from, or converting, a file with medium or high detected risks. Flow:
+  run the converter (it refuses, exit 3, `exit_reasons: input-risks`) or `--dry-run`; tell the
+  user the specific findings; only after an explicit yes, rerun with `--allow-risky-input`.
+  That flag is consent to attempt the conversion, not a safety override: the sandbox and every
+  limit still apply, and a finished run exits 1 because the input had risks.
 - Sending a file that failed `--share-check`.
 
 ## Exit codes (all scripts)
@@ -127,11 +136,11 @@ rules. No flag skips the sandbox.
 | 0 | `ok` | Done, nothing at or above the threshold | The result, plus `not_checked` |
 | 1 | `findings` | Done, but see `exit_reasons`: risk threshold, share blockers, skipped items, incomplete report, risky input or output | Each reason; "incomplete" first if `complete` is false |
 | 2 | `error` | Not an office file, damaged, unsupported, bad option, LibreOffice missing, or an internal parser error (still JSON) | What the file really is and the next step |
-| 3 | `refused` | Safety cap: size, time, ZIP rules, DOCTYPE, output exists, no sandbox | Which rule; do not work around it |
+| 3 | `refused` | A limit or safety rule: size, time, memory, ZIP bomb or ZIP rules, DOCTYPE, output exists, no sandbox, risky input without `--allow-risky-input` | Which rule; do not work around it |
 
 ## Verification checklist
 - [ ] Family and format reported from bytes, with `extension_matches`.
-- [ ] `complete` is true, or the gaps are named.
+- [ ] `complete` and `coverage_complete` are true, or `incomplete` and `coverage_gaps` are named.
 - [ ] Every high and medium risk explained in plain words.
 - [ ] Converted output inspected; engine named (LibreOffice version if known).
 - [ ] Content spot-checked against the source (text, cell values, slide count).
@@ -147,8 +156,12 @@ rules. No flag skips the sandbox.
 | Chinese text shows boxes on Linux | fonts | `references/linux.md` fonts section |
 
 ## Platform notes
-- Scripts: standard-library Python, any OS. Tested on Linux (Python 3.13.5). macOS and Windows
-  are covered by the CI workflow, which has not run yet.
+- Scripts: standard-library Python. **Tested only on Linux** (Python 3.13.5 and 3.9). The CI
+  workflow targets Linux, macOS and Windows but has not run yet (repo not pushed).
+- Real WPS-saved files tested: six `.doc/.xls/.ppt/.docx/.xlsx/.pptx` from WPS Office 11.1
+  (Apache Tika corpus, `tests/samples/`). No native `.wps/.et/.dps` from WPS was available.
+- Converter limits: `--max-memory` default 4096 MB (clamped to the process's `ulimit -v`),
+  `--timeout` 120 s, `--max-bytes` 50 MB.
 - `convert_wps.py` sandboxing uses bubblewrap, which exists only on Linux. On macOS and Windows
   it always refuses: run it in a Linux VM or container (Docker, WSL2, UTM).
 
@@ -159,6 +172,7 @@ rules. No flag skips the sandbox.
 | Linux | Not documented | Yes (forum, 2023) | Yes (bwrap) |
 | Android, iOS | No | No (Android "planned", 2023) | No |
 Details and sources: `references/platforms.md`.
+- Linux install path `/opt/kingsoft/wps-office/office6`: sourced (ArchWiki, nixpkgs), not verified here.
 - WPS JS macros run inside WPS. Inside a macro, `CreateObject("kwps.application")` (Writer),
   `"ket.application"` (Spreadsheets) or `"kwpp.application"` (Presentation) reaches another WPS
   app. Driving WPS from outside through COM is a Windows route (community posts; not tested).

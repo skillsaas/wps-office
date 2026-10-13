@@ -2,6 +2,30 @@
 
 Load this for "is it safe", "can I send this", or any high or medium finding.
 
+**Read first:** detection is by known storage places and patterns. Unknown or untested macro
+carriers (for example JS macros inside binary `.wps/.et/.dps`, objects inside compressed PDF
+streams, new link handlers) can be missed. An empty `detected_risks` means "nothing found by
+these checks", never "safe". There is no malware scan. Each risk has a `category`: `execution`
+(code can run), `fetch` (something is loaded from elsewhere), `deception` (the file misleads),
+`privacy`, `coverage` (a check could not see inside), `compatibility`.
+
+## Link scheme policy (version 0.1.2, `scripts/wpslib.py` `link_target`)
+1. Percent-decode until stable (at most 8 passes), NFKC-normalize (fullwidth letters fold),
+   map hyphen look-alikes (soft hyphen, U+2010 to U+2015, U+2212) to `-`, delete format
+   characters (Unicode Cf) and any whitespace or control character inside the scheme token.
+2. Allowlist, risk none: `http`, `https`, `mailto`, and relative or `#` targets.
+3. High: `HIGH_SCHEMES` (`file`, drive letters, UNC, `smb`, `javascript`, `vbscript`, `data`,
+   `mhtml`, `its`, `ms-its`, `shell`, `search`, `search-ms`, `ms-msdt`, `ms-search`, `jar`, `res`,
+   `cdl`), every `ms-*` scheme (`ms-officecmd`, `ms-cxh`, `ms-excel:ofe|u|...`, `ms-word`, ...),
+   and a scheme that matches one of those with hyphens removed.
+4. High: a relative target whose last segment ends in an executable or script extension
+   (`EXEC_EXT`: exe, scr, bat, cmd, vbs, js, ps1, hta, lnk, msi, docm, xlsm and more).
+5. Medium: any other scheme (`unusual-link-scheme`).
+Why every `ms-*`: these launch local Office or Windows handlers, and several (`ms-msdt`, the
+`ms-office` URI forms) were exploited. Legitimate uses exist (`ms-word:ofe|u|https://...` in
+SharePoint links); expect them flagged, and tell the user why instead of calling them malicious.
+A new handler needs a code change here; the list is versioned with the scripts.
+
 ## Risk levels used by inspect_wps.py
 | Risk | Kind | Why |
 | :--- | :--- | :--- |
@@ -87,6 +111,30 @@ LibreOffice parses and renders the whole document, so it is attack surface. `con
 
 Tested here: a `.docx` with an external linked picture made unsandboxed LibreOffice send
 `OPTIONS` and `GET` requests to a local server; the same file through `convert_wps.py` sent none.
+
+## Sandbox boundary, precisely
+What bwrap gives LibreOffice: no network namespace (`--unshare-all`), an empty environment,
+read-only `/usr` and `/etc` (system files readable, not writable), a private `/tmp`, a private
+work folder holding only the input copy, a fresh profile and output folder, and nothing else
+of the user's home. The whole process group is killed at `--timeout`; RLIMIT_AS and
+RLIMIT_FSIZE cap memory and file size. Only one regular output file is copied out (no symlinks).
+What remains exposed: the Linux kernel (a kernel or bwrap escape bug defeats it), LibreOffice
+bugs inside the sandbox (they can read `/usr` and `/etc`, use CPU until the timeout, and write
+a hostile output file, which is then inspected and still untrusted), and anything the input
+itself contains. If bwrap exists but user namespaces are disabled, bwrap fails to start and the
+converter reports an error rather than running unsandboxed.
+`--allow-risky-input` changes none of this: it only lets the conversion be attempted.
+
+## Reproduce the canary
+`tests/smoke_test.py` tests `canary_threat_is_real_without_sandbox` and
+`canary_no_network_in_sandbox`: a local HTTP server on 127.0.0.1 and a `.docx` whose picture is
+linked to it (`tests/make_fixtures.py` `canary_docx`). Expected: plain `soffice --convert-to pdf`
+makes requests (OPTIONS and GET seen with LibreOffice 25.2.3.2); `convert_wps.py` makes none.
+
+## Extracted and converted files are untrusted
+Pictures saved by `cellimages.py` and files written by `convert_wps.py` come from the same
+untrusted document. Do not open, render, run or upload them automatically; inspect converted
+output (the converter does) and treat pictures as data.
 
 ## What these tools do not protect against
 - Exploits in LibreOffice itself beyond what the sandbox contains.

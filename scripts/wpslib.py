@@ -25,7 +25,7 @@ import zipfile
 import zlib
 import xml.etree.ElementTree as ET
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 SCHEMA_VERSION = "1"
 
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -85,6 +85,12 @@ def clean(text, limit=200):
 
 # ---------------------------------------------------------------- link targets
 SAFE_SCHEMES = {"http", "https", "mailto"}
+# Final path segments that run code when opened from a relative or file link
+# (Windows executable and script types, after Outlook's blocked-attachment list).
+EXEC_EXT = {"exe", "com", "scr", "pif", "bat", "cmd", "vbs", "vbe", "js", "jse", "wsf", "wsh", "ps1",
+            "psm1", "msi", "msp", "hta", "cpl", "jar", "lnk", "reg", "dll", "application", "appref-ms",
+            "url", "scf", "inf", "msc", "gadget", "vb", "sct", "chm", "iso", "img", "vhd", "vhdx",
+            "docm", "xlsm", "pptm", "dotm", "xltm", "xlam", "ppam", "sh", "command", "app"}
 HIGH_SCHEMES = {"file", "smb", "unc", "javascript", "vbscript", "data", "mhtml", "its", "ms-its",
                 "shell", "search", "search-ms", "ms-msdt", "ms-search", "jar", "res", "cdl"}
 
@@ -92,19 +98,32 @@ HIGH_SCHEMES = {"file", "smb", "unc", "javascript", "vbscript", "data", "mhtml",
 def link_target(raw):
     """One normalizer for every link check: (normalized target, scheme, host, risk).
 
-    Strips whitespace and control/invisible characters, percent-decodes up to
-    three times, then reads the scheme. Allowlist: http, https, mailto and
+    Percent-decodes until stable (at most 8 passes), NFKC-normalizes, strips
+    format, whitespace and control characters (also inside the scheme token),
+    then reads the scheme. A relative target whose last segment has an
+    executable or script extension (EXEC_EXT) is high. Allowlist: http, https, mailto and
     in-document targets ("#x", relative). Every ms-* scheme (ms-msdt,
     ms-excel:ofe|u|..., ms-word, ...) and the HIGH_SCHEMES are high; any other
     scheme is medium.
     """
     t = raw or ""
-    for _ in range(3):
+    for _ in range(8):                      # decode until stable (capped)
         d = urllib.parse.unquote(t)
         if d == t:
             break
         t = d
+    # NFKC folds fullwidth and other compatibility forms (fullwidth m becomes m);
+    # then format characters (Cf: soft hyphen, zero-width, bidi) and every
+    # whitespace or control character inside the scheme token are removed.
+    t = unicodedata.normalize("NFKC", t)
+    t = re.sub("[\u00ad\u2010-\u2015\u2212\ufe63]", "-", t)   # hyphen look-alikes, incl. soft hyphen
+    t = "".join(ch for ch in t if unicodedata.category(ch) != "Cf")
     t = _STRIP.sub("", t).strip().strip("\x00")
+    colon = t.find(":")
+    if 0 < colon < 40:
+        head = re.sub(r"[\s\x00-\x1f\x7f]", "", t[:colon])
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9+.\-]*", head):
+            t = head + t[colon:]
     if t.startswith(("\\\\", "//")):
         scheme = "unc"
     else:
@@ -118,9 +137,13 @@ def link_target(raw):
         host = hm.group(1).rsplit("@", 1)[-1]
     elif scheme == "unc":
         host = re.split(r"[\\/]", t.lstrip("\\/"), maxsplit=1)[0]
-    if scheme in SAFE_SCHEMES or scheme == "relative":
+    last = re.split(r"[\\/]", t.split("#", 1)[0].split("?", 1)[0])[-1].rstrip(". ").lower()
+    is_exec = "." in last and last.rsplit(".", 1)[1] in EXEC_EXT
+    if scheme == "relative" and is_exec:
+        risk = "high"
+    elif scheme in SAFE_SCHEMES or scheme == "relative":
         risk = "none"
-    elif scheme in HIGH_SCHEMES or scheme.startswith("ms-"):
+    elif scheme in HIGH_SCHEMES or scheme.startswith("ms-") or scheme.replace("-", "") in HIGH_SCHEMES:
         risk = "high"
     else:
         risk = "medium"
@@ -394,7 +417,9 @@ def open_zip(data, max_entries=5000, max_total=512 * 1024 * 1024,
 
 
 ZIP_ERRORS = (zipfile.BadZipFile, zipfile.LargeZipFile, zlib.error, NotImplementedError,
-              EOFError, ValueError, KeyError, RuntimeError, struct.error, OSError)
+              EOFError, ValueError, RuntimeError, struct.error)
+# OSError (real I/O faults) and KeyError (lookup bugs) are deliberately not here:
+# they reach the catch-all in each script and are reported as such, not as "damaged ZIP".
 
 
 def read_member(zf, name, cap=64 * 1024 * 1024):
@@ -419,14 +444,20 @@ def _has_dtd(data):
     parser that honours the BOM or the XML declaration cannot see something this
     check did not. Data is decoded once per encoding with errors ignored.
     """
-    if re.search(rb"<!\s*(DOCTYPE|ENTITY)", data, re.I):
+    if re.search(rb"<!\s*(DOCTYPE|ENTITY)", _COMMENT_B.sub(b"", data), re.I):
         return True
     if b"\x00" not in data[:4096] and not data.startswith((b"\xff\xfe", b"\xfe\xff")):
         return False
     for enc in _ENCODINGS:
-        if _DTD.search(data.decode(enc, "ignore")):
+        if _DTD.search(_COMMENT_S.sub("", data.decode(enc, "ignore"))):
             return True
     return False
+
+
+# Complete comments and CDATA sections cannot declare a DTD, so a DOCTYPE
+# mentioned inside them is not refused. An unterminated comment is not removed.
+_COMMENT_B = re.compile(rb"<!--.*?-->|<!\[CDATA\[.*?\]\]>", re.S)
+_COMMENT_S = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>", re.S)
 
 
 def parse_xml(data):

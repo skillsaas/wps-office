@@ -565,7 +565,14 @@ def detected_risks_framing_and_exit_reasons():
 
 @test
 def fuzz_never_crashes():
-    """Seeded mutation fuzz: every input gives JSON and an exit code in 0..3."""
+    """Seeded mutation fuzz: every input gives JSON and an exit code in 0..3.
+
+    What: 8 seed fixtures (OOXML, OLE2, ODF, RTF, encrypted), WPS_FUZZ_N cases (default 300,
+    seed 20261013); each case applies 1 to 12 random byte overwrites, deletions (1 to 64 bytes)
+    or insertions (1 to 16 bytes). Both inspect_wps.main and cellimages.main run in process.
+    Bounds: inspect gets --timeout 10; the scripts' own size and ZIP caps apply. Not covered:
+    structure-aware mutation (most ZIP mutations fail the CRC early), PDF seeds, LibreOffice.
+    """
     import random
     import io
     import contextlib
@@ -658,6 +665,101 @@ def convert_refuses_risky_input_by_default():
         return ("SKIP", "needs LibreOffice and a working bwrap")
     rc, d = js("convert_wps.py", f("macro_under_docx.docx"), os.path.join(TMP, "m.pdf"), "--to", "pdf")
     assert rc == 3 and "input-risks" in d["exit_reasons"], d
+
+
+@test
+def link_lookalikes_and_relative_executables():
+    rc, d = js("inspect_wps.py", f("lookalike_links.docx"), "--share-check")
+    high = [x for x in d["detected_risks"] if x["kind"] == "dangerous-link-scheme"]
+    assert len(high) == 7 and rc == 1, d["detected_risks"]
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import wpslib
+    for raw in ("ms\u00admsdt:x", "fi\u00adle:///x", "\uff4ds-msdt:x", "java\nscript:x", "ms-ms\tdt:x",
+                "%25252566ile://s/x", "payload.exe", "a/b/run.HTA", "x.lnk#frag"):
+        assert wpslib.link_target(raw)[3] == "high", raw
+    for raw in ("docs/report.pdf", "#bookmark", "https://ok.example/a.exe.html", "mailto:a@b.example"):
+        assert wpslib.link_target(raw)[3] == "none", raw
+
+
+@test
+def orphan_instrtext_dde_and_doctype_in_comment():
+    _, d = js("inspect_wps.py", f("dde_orphan.docx"))
+    assert "dde-field" in kinds(d), d["detected_risks"]
+    rc, d = js("inspect_wps.py", f("doctype_comment.docx"))
+    assert rc == 0 and d["status"] == "ok", d.get("error")
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import wpslib
+    assert wpslib._has_dtd(b"<!-- unterminated <!DOCTYPE a>") and wpslib._has_dtd(b"<!-- x --><!DOCTYPE a>")
+    assert OSError not in wpslib.ZIP_ERRORS and KeyError not in wpslib.ZIP_ERRORS
+
+
+@test
+def risk_categories_coverage_gaps_and_exit_consistency():
+    for n in sorted(os.listdir(FX)):
+        rc, d = js("inspect_wps.py", f(n))
+        assert d["exit_code"] == rc and d["status"] == {0: "ok", 1: "findings", 2: "error", 3: "refused"}[rc], n
+        for x in d["detected_risks"]:
+            assert x["category"] != "other", (n, x["kind"])
+        assert d["coverage_complete"] == (not d["coverage_gaps"]), n
+    _, d = js("inspect_wps.py", f("kingsoft.wps"))
+    assert "binary-streams-not-parsed" in d["coverage_gaps"]
+
+
+@test
+def real_wps_saved_samples():
+    """Six files saved by WPS Office (Apache Tika corpus, Apache-2.0; tests/samples/README.md)."""
+    sd = os.path.join(ROOT, "tests", "samples")
+    if not os.path.isdir(sd):
+        return ("SKIP", "tests/samples not shipped (npm package); present in the git repo")
+    want = {"doc": "writer", "xls": "spreadsheet", "ppt": "presentation",
+            "docx": "writer", "xlsx": "spreadsheet", "pptx": "presentation"}
+    for ext, fam in want.items():
+        rc, d = js("inspect_wps.py", os.path.join(sd, "testWPSAttachment." + ext))
+        assert d["family"] == fam and d["extension_matches"] and "KSOProductBuildVer" in d["wps_markers"], (ext, d["family"])
+        assert d["complete"], (ext, d["incomplete"])
+        k = kinds(d)
+        assert ("ole-package" in k) if ext != "ppt" else ("embedded-objects" in k), (ext, k)
+    _, d = js("inspect_wps.py", os.path.join(sd, "testWPSAttachment.ppt"))
+    assert any("9 ExOleObjStg" in x["detail"] for x in d["detected_risks"])
+    _, d = js("inspect_wps.py", os.path.join(sd, "testWPSAttachment.pptx"))
+    assert len(d["embedded_objects"]) == 9
+
+
+@test
+def real_sample_converts_with_consent_only():
+    if not soffice() or not sandbox_ok():
+        return ("SKIP", "needs LibreOffice and a working bwrap")
+    src = os.path.join(ROOT, "tests", "samples", "testWPSAttachment.xls")
+    if not os.path.exists(src):
+        return ("SKIP", "tests/samples not shipped")
+    out = os.path.join(TMP, "real_sample.xlsx")
+    rc, d = js("convert_wps.py", src, out, "--to", "xlsx")
+    assert rc == 3 and "input-risks" in d["exit_reasons"] and not os.path.exists(out)
+    rc, d = js("convert_wps.py", src, out, "--to", "xlsx", "--dry-run")
+    assert rc == 1 and not d["plan"]["would_run"] and not os.path.exists(out)
+    rc, d = js("convert_wps.py", src, out, "--to", "xlsx", "--allow-risky-input")
+    assert rc == 1 and os.path.exists(out) and d["engine_version"].startswith("LibreOffice"), d.get("error")
+
+
+@test
+def convert_memory_limit_clamped_to_ulimit():
+    if not soffice() or not sandbox_ok():
+        return ("SKIP", "needs LibreOffice and a working bwrap")
+    out = os.path.join(TMP, "clamp.pdf")
+    code = ("import resource,sys,runpy;lim=3500*1024*1024;resource.setrlimit(resource.RLIMIT_AS,(lim,lim));"
+            "sys.argv=['convert_wps.py',%r,%r,'--to','pdf','--json'];runpy.run_path(%r,run_name='__main__')"
+            % (f("clean.docx"), out, os.path.join(ROOT, "scripts", "convert_wps.py")))
+    pr = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    d = json.loads(pr.stdout)
+    assert pr.returncode == 0 and d["memory_limit_mb"] == 3500 and "ulimit" in d["notes"][0], (pr.returncode, d.get("error"))
+
+
+@test
+def convert_dry_run_writes_nothing():
+    out = os.path.join(TMP, "dry.pdf")
+    rc, d = js("convert_wps.py", f("clean.docx"), out, "--to", "pdf", "--dry-run")
+    assert "plan" in d and d["plan"]["expected_losses"] and not os.path.exists(out), d
+    assert rc == (0 if d["plan"]["would_run"] else 1)
 
 
 def main():

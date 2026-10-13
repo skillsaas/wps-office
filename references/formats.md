@@ -66,6 +66,17 @@ Outlook.com called it corrupt, while WPS opened it, and "Save As .doc" in WPS fi
 `inspect_wps.py` reads such files, lists `sector-past-end-of-file` under `incomplete`, and
 exits 1 (or 0 with `--allow-incomplete`). Tested on a synthetic fixture only.
 
+## Real WPS-saved files tested (Apache Tika corpus, Apache-2.0)
+`tests/samples/` holds six files saved by WPS Office 11.1 (`testWPSAttachment.doc/.xls/.ppt/.docx/.xlsx/.pptx`,
+from TIKA-3526). Observed: every one carries `KSOProductBuildVer`; producers read
+`WPS Office_11.1.0.10700_...`, `WPS 演示` and `WPS 表格`; the `.docx` uses the wps.cn namespace;
+embedded objects sit in `MBD...` storages (binary) and `*/embeddings/` (OOXML). In the `.ppt`
+the objects are ExOleObjStg records inside the `PowerPoint Document` stream (the inspector counts
+9 headers, matching the 9 objects in the `.pptx`). A bug found with these files and fixed in
+0.1.2: the binary family was read from embedded storages (a `.xls` embedding a `.doc` was called
+Writer); now only root-level streams decide. No native `.wps/.et/.dps` from WPS, and no WPS file
+with DISPIMG or JS macros, was found under a public license.
+
 ## Encryption markers (detected, never decrypted)
 | Format | Marker | Source |
 | :--- | :--- | :--- |

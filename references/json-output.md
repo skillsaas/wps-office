@@ -27,9 +27,10 @@ characters) and capped.
 | `hidden` | `sheets`, `rows`, `columns`, `hidden_slides`, `hidden_text_runs` (vanish, specVanish, webHidden; `w:val="0"` ignored) |
 | `review` | `tracked_changes: {insertions, deletions}`, `comment_parts` |
 | `assessment` | Fixed reminder: detected risks are not a safety verdict |
-| `detected_risks` | `{risk, kind, detail}`, see `security.md` (was `risks` in 0.1.0) |
+| `detected_risks` | `{risk, kind, category, detail}`, see `security.md`. `category`: `execution`, `fetch`, `deception`, `privacy`, `coverage`, `compatibility`. Renamed from `risks` in 0.1.1: old parsers must read the new key |
 | `metadata_flags` | Metadata fields that held bidi or invisible characters |
-| `coverage_complete` | False when some checks do not apply to this format (binary, RTF, PDF); see `not_checked` |
+| `complete` | The parser read every structure it tried (false: damaged or encrypted, see `incomplete`) |
+| `coverage_complete`, `coverage_gaps` | False plus slugs (`binary-streams-not-parsed`, `jsa-in-binary-unknown`, `rtf-partial`, `pdf-object-streams`, `odf-content-not-parsed`, `works-not-parsed`) when some checks do not apply to this format; text in `not_checked` |
 | `exit_reasons` | Why exit 1: `risk-threshold`, `share-blockers`, `incomplete` |
 | `overall_risk` | `none`, `low`, `medium`, `high` |
 | `complete`, `incomplete` | False plus reasons when structure was damaged or encrypted |
@@ -44,6 +45,8 @@ distinct picture, listing every cell that shows it; `skipped` (`cell`, `reason`)
 `output_dir`. `--max-total` (default 512 MB) caps all bytes written; pictures are streamed.
 
 ## convert_wps.py
+`plan` (with `--dry-run`: `target`, `would_run`, `blockers`, `sandbox_available`,
+`expected_losses`), `memory_limit_mb` (after clamping to `ulimit -v`), `engine_version`, `notes`,
 `exit_reasons` (`input-risks`, `output-risks`), `input_family`, `input_risks`, `engine`,
 `sandbox`, `output`, `output_check` (`family`, `overall_risk`, `detected_risks`, `complete`,
 `macros_left`), `not_checked`.
@@ -72,3 +75,29 @@ distinct picture, listing every cell that shows it; `skipped` (`cell`, `reason`)
 | convert | `--max-memory MB` | 4096 | RLIMIT_AS for LibreOffice |
 | convert | `--force` | off | Replace OUT only |
 | convert | `--allow-risky-input` | off | Convert medium/high-risk input (exit 1) |
+
+Resource-limit hits (ZIP bomb ratio, member or total size, `--max-bytes`, `--timeout`, memory)
+are always exit 3 `refused`, never exit 2. Exit 3 is not only "no sandbox".
+
+## Canonical examples (real 0.1.2 output, trimmed)
+Clean OOXML, exit 0:
+```json
+{"status": "ok", "family": "writer", "detected_risks": [], "overall_risk": "none",
+ "complete": true, "coverage_complete": true, "coverage_gaps": [], "exit_reasons": [], "exit_code": 0}
+```
+Real WPS-saved `.ppt` (Tika sample), exit 0 with medium risk and a coverage gap:
+```json
+{"status": "ok", "family": "presentation", "wps_markers": ["KSOProductBuildVer"],
+ "detected_risks": [{"risk": "medium", "kind": "embedded-objects", "category": "coverage",
+   "detail": "PowerPoint stream has 9 ExOleObjStg record header(s): embedded OLE objects (byte scan; contents not parsed, may include OLE packages)"}],
+ "coverage_complete": false, "coverage_gaps": ["binary-streams-not-parsed", "jsa-in-binary-unknown"], "exit_code": 0}
+```
+ZIP bomb, exit 3:
+```json
+{"ok": false, "status": "refused", "error": "ZIP member compression ratio over 200: xl/workbook.xml", "exit_code": 3}
+```
+Risky input to the converter without consent, exit 3:
+```json
+{"ok": false, "status": "refused", "exit_reasons": ["input-risks"],
+ "error": "input has detected risks (ole-package); convert only if the user accepts that, with --allow-risky-input", "exit_code": 3}
+```
