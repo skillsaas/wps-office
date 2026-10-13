@@ -55,3 +55,20 @@ distinct picture, listing every cell that shows it; `skipped` (`cell`, `reason`)
 | 1 | `--fail-on-risk` met, share blockers, incomplete | Missing pictures or skipped files | Input or output has medium+ risks (`exit_reasons`) |
 | 2 | Not an office file, bad option | Not a ZIP spreadsheet, nothing to extract | Bad option, unsupported, LibreOffice missing or failed |
 | 3 | Caps, ZIP rules, DOCTYPE (UTF-8/16/32), time, memory | Caps, `--max-total`, traversal, output exists | No sandbox, risky input without `--allow-risky-input`, caps, time, output exists, output not one regular file |
+
+## Flags
+| Script | Flag | Default | Effect |
+| :--- | :--- | :--- | :--- |
+| all | `--json` | off | One JSON object on stdout |
+| all | `--max-bytes N` | 100 MB inspect, 50 MB convert | Refuse larger input (exit 3) |
+| all | `--timeout S` | 60 inspect, 120 convert | Stop (exit 3); convert kills LibreOffice |
+| inspect | `--fail-on-risk low/medium/high` | off | Exit 1 when a detected risk reaches the level |
+| inspect | `--share-check` | off | Privacy blockers; exit 1 if any |
+| inspect | `--allow-incomplete` | off | Do not exit 1 only because the report is incomplete |
+| inspect | `--show-targets` | off | Print link targets as text (never fetched) |
+| cellimages | `--extract DIR` / `--dry-run` | off | Save to a new folder / only list |
+| cellimages | `--max-file`, `--max-total`, `--max-count` | 25 MB, 512 MB, 5000 | Per picture, all bytes, cells |
+| convert | `--to FMT` | required | docx, xlsx, pptx, pdf, odt, ods, odp |
+| convert | `--max-memory MB` | 4096 | RLIMIT_AS for LibreOffice |
+| convert | `--force` | off | Replace OUT only |
+| convert | `--allow-risky-input` | off | Convert medium/high-risk input (exit 1) |

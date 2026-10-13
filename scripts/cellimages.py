@@ -11,7 +11,7 @@ picture so they can be listed, checked or saved.
 Usage:
   python <skill-dir>/scripts/cellimages.py FILE.xlsx [--json]
   python <skill-dir>/scripts/cellimages.py FILE.xlsx --extract NEW_DIR [--json] [--dry-run]
-         [--max-bytes N] [--max-file N] [--max-count N] [--timeout S]
+         [--max-bytes N] [--max-file N] [--max-total N] [--max-count N] [--timeout S]
 
 Works on .xlsx/.xlsm and on ZIP-based .et files. A binary (OLE2) .et must first be
 saved as .xlsx in WPS. Read-only by default. --extract writes only into a new

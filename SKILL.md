@@ -81,6 +81,15 @@ means "nothing found by these checks", never "safe". `exit_reasons` says why exi
 | Save DISPIMG cell pictures | Remove macros or metadata for you (the user does that in WPS) |
 | Explain JSA, wpsjs and AirScript code for the user to run | Run WPS, macros or AirScript; scan for malware |
 
+## Operation policy
+| Script | Reads | Writes | Launches a program | Confirm first | Success means |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `inspect_wps.py` | the file | nothing | no | no | exit 0, or exit 1 with `exit_reasons` explained |
+| `cellimages.py --extract` | the file | a new folder only | no | yes if the file has high risks | `saved` lists every distinct picture, `missing`/`skipped` explained |
+| `convert_wps.py` | the file | one new file (`--force` replaces it) | LibreOffice in bwrap | `--force`, `--allow-risky-input` | exit 0 and the fidelity checklist in `conversion.md` |
+`--force` only lets OUT be replaced. It never relaxes the sandbox, size, time, memory or ZIP
+rules. No flag skips the sandbox.
+
 ## Workflow
 1. **Identify** by bytes with `inspect_wps.py`. Say which family and format it really is.
 2. **Copy, never edit the original.** Every script writes only to a new path.

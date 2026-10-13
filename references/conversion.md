@@ -56,6 +56,18 @@ LibreOffice 25.2.3.2 in the bwrap sandbox: a `.doc` renamed `.wps` became a `.do
 text intact; an `.xls` renamed `.et` became an `.xlsx` with the cell values intact; a `.ppt`
 renamed `.dps` became a PDF. These are LibreOffice-made binaries, not WPS-made files.
 
+## Expected loss by content type (LibreOffice import, documented classes, not measured here)
+| Content | Expect | Check |
+| :--- | :--- | :--- |
+| Body text, tables, simple styles | Usually kept | Text spot-check |
+| Fonts | Substituted if missing on the converting machine; line and page breaks move | Page count |
+| Formulas | Kept as formulas; functions Excel or LibreOffice lack (DISPIMG) become errors | Three key cells |
+| Charts | Kept but may restyle | Look at each chart |
+| Comments, tracked changes | Usually kept; review them before sending | `inspect_wps.py --share-check` on the output |
+| OLE objects | Kept as objects or a picture of them | `embedded_objects` in `output_check` |
+| Macros (VBA, JSA) | VBA may survive into docm/xlsm; JSA is not kept | `macros_left` |
+| WPS-only layout and cell pictures | Changed or lost | Compare with the original in WPS |
+
 ## Fidelity checklist (after every conversion)
 - [ ] Page count (Writer, PDF) or slide count matches the original.
 - [ ] Sheet names and order match; three or more key cells or totals match.
