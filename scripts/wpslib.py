@@ -25,7 +25,7 @@ import zipfile
 import zlib
 import xml.etree.ElementTree as ET
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 SCHEMA_VERSION = "1"
 
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"

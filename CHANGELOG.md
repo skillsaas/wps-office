@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased: 0.1.4 backlog (round-4 reviews)
+## 0.1.4 (2026-10-13)
+Discovery only; no script or skill behaviour changed.
+- npm and GitHub description rewritten as a one-sentence answer (what, which app, which agents), under 250 characters; more npm keywords and GitHub topics.
+- README opens with a TL;DR and adds "What it does" and an FAQ.
+
+## Next: backlog from the round-4 reviews
 - Tariq N8 (medium): consent is echo text; bind a one-time token to the input SHA-256, risk set and expiry; keep `--consent` as the quote for the log.
 - Tariq N9: `install_skill.py --replace` aside name collides within the same second.
 - Tariq N10: combining marks in a scheme (`m` + U+0301 + `s-msdt:`) evade the high list; NFKD and drop Mn in the scheme token.

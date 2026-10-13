@@ -4,7 +4,7 @@ description: "Use when a user has a WPS Office (Kingsoft) file or task: a .wps, 
 license: MIT
 compatibility: "Python 3.9+ standard library only. convert_wps.py also needs LibreOffice and, on Linux, bubblewrap (bwrap); without bwrap it refuses. Smoke tests pass in CI on Linux (all 63, sandbox included), macOS and Windows (conversion tests skip there), Python 3.9 and 3.13. WPS Office itself was not installed or run."
 metadata:
-  version: "0.1.3"
+  version: "0.1.4"
   updated: "2026-10-13"
   last-verified: "2026-10-13"
   risk: "medium"
